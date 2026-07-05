@@ -1,0 +1,63 @@
+version: "3.8"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: elohim_sms
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d elohim_sms"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build: ./rust_backend
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/elohim_sms
+      BIND_ADDRESS: 0.0.0.0:3000
+      RUST_LOG: info
+      JSON_LOGS: ${JSON_LOGS:-false}
+      INTERNAL_BOT_TOKEN: ${INTERNAL_BOT_TOKEN:-change_me_to_random_long_string}
+      OWNER_TELEGRAM_ID: ${OWNER_TELEGRAM_ID}
+      OWNER_USERNAME: ${OWNER_USERNAME}
+      SMS_GATEWAY_URL: ${SMS_GATEWAY_URL:-https://api.devil-traff.cc}
+      SMS_GATEWAY_AUTH_TOKEN: ${SMS_GATEWAY_AUTH_TOKEN}
+      SMS_GATEWAY_ROUTE: ${SMS_GATEWAY_ROUTE:-Auto}
+      SMS_GATEWAY_SENDER_ID: ${SMS_GATEWAY_SENDER_ID:-ElohimSMS}
+      CAPTCHA_SITE_URL: ${CAPTCHA_SITE_URL:-http://localhost:8080}
+      RECAPTCHA_SECRET: ${RECAPTCHA_SECRET:-}
+      RECAPTCHA_SITE_KEY: ${RECAPTCHA_SITE_KEY:-}
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  bot:
+    build: ./telegram_bot
+    environment:
+      BOT_TOKEN: ${BOT_TOKEN}
+      API_BASE_URL: http://backend:3000
+      INTERNAL_BOT_TOKEN: ${INTERNAL_BOT_TOKEN:-change_me_to_random_long_string}
+      OWNER_TELEGRAM_ID: ${OWNER_TELEGRAM_ID}
+      BOT_MODE: ${BOT_MODE:-polling}
+      WEBHOOK_URL: ${WEBHOOK_URL:-}
+      WEBHOOK_HOST: ${WEBHOOK_HOST:-0.0.0.0}
+      WEBHOOK_PORT: ${WEBHOOK_PORT:-8080}
+      WEBHOOK_PATH: ${WEBHOOK_PATH:-/webhook}
+    ports:
+      - "${WEBHOOK_PORT:-8080}:${WEBHOOK_PORT:-8080}"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

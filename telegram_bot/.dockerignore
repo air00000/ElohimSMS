@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.env
+.env.example
+Dockerfile
+.pytest_cache/
+.venv/
+venv/
