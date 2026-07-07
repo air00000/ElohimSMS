@@ -5,7 +5,27 @@ use crate::models::{
     VerifyCaptchaRequest, VerifyCaptchaResponse,
 };
 use crate::pagination::PaginatedResponse;
-use utoipa::OpenApi;
+use utoipa::openapi::security::{ApiKey, ApiKeyValue, SecurityScheme};
+use utoipa::{Modify, OpenApi};
+
+pub struct SecurityAddon;
+
+impl Modify for SecurityAddon {
+    fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
+        if let Some(components) = openapi.components.as_mut() {
+            components.add_security_scheme(
+                "api_key",
+                SecurityScheme::ApiKey(ApiKey::Header(ApiKeyValue::new("X-API-Key"))),
+            );
+            components.add_security_scheme(
+                "internal_bot_token",
+                SecurityScheme::ApiKey(ApiKey::Header(ApiKeyValue::new(
+                    "X-Internal-Bot-Token",
+                ))),
+            );
+        }
+    }
+}
 
 #[derive(OpenApi)]
 #[openapi(
@@ -51,6 +71,7 @@ use utoipa::OpenApi;
             PaginatedResponse<ApiKey>,
         )
     ),
+    modifiers(&SecurityAddon),
     tags(
         (name = "health", description = "Health check"),
         (name = "admin", description = "Admin management"),

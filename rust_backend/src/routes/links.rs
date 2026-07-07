@@ -15,7 +15,8 @@ use axum::{extract::State, Json};
     responses(
         (status = 200, description = "Link info", body = LinkInfoResponse),
         (status = 404, description = "Not found")
-    )
+    ),
+    security(())
 )]
 pub async fn get_link_info(
     State(state): State<AppState>,
@@ -45,7 +46,8 @@ pub async fn get_link_info(
         (status = 400, description = "Bad request"),
         (status = 403, description = "Forbidden / captcha failed"),
         (status = 404, description = "Not found")
-    )
+    ),
+    security(())
 )]
 pub async fn verify_captcha(
     State(state): State<AppState>,

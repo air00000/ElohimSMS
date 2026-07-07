@@ -6,7 +6,8 @@ use axum::{extract::State, Json};
     path = "/health",
     responses(
         (status = 200, description = "Service health status", body = HealthResponse)
-    )
+    ),
+    security(())
 )]
 pub async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
     let db_status = match sqlx::query("SELECT 1").fetch_one(&state.pool).await {
