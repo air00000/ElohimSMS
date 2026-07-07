@@ -5,7 +5,7 @@ use crate::models::{
     VerifyCaptchaRequest, VerifyCaptchaResponse,
 };
 use crate::pagination::PaginatedResponse;
-use utoipa::openapi::security::{ApiKey, ApiKeyValue, SecurityScheme};
+use utoipa::openapi::security::{ApiKey as SecurityApiKey, ApiKeyValue, SecurityScheme};
 use utoipa::{Modify, OpenApi};
 
 pub struct SecurityAddon;
@@ -15,11 +15,11 @@ impl Modify for SecurityAddon {
         if let Some(components) = openapi.components.as_mut() {
             components.add_security_scheme(
                 "api_key",
-                SecurityScheme::ApiKey(ApiKey::Header(ApiKeyValue::new("X-API-Key"))),
+                SecurityScheme::ApiKey(SecurityApiKey::Header(ApiKeyValue::new("X-API-Key"))),
             );
             components.add_security_scheme(
                 "internal_bot_token",
-                SecurityScheme::ApiKey(ApiKey::Header(ApiKeyValue::new(
+                SecurityScheme::ApiKey(SecurityApiKey::Header(ApiKeyValue::new(
                     "X-Internal-Bot-Token",
                 ))),
             );
