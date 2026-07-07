@@ -37,15 +37,15 @@
         <p>Please complete the verification to continue.</p>
         <div id="loading" class="loading">Loading...</div>
         <form id="verify-form" style="display: none;">
-            <div class="g-recaptcha" data-sitekey="YOUR_RECAPTCHA_SITE_KEY" data-callback="onCaptchaSuccess"></div>
+            <div class="g-recaptcha" data-sitekey="6Lfdp0QtAAAAABx9wQ9WyWmi9z0R_kSjzKhwWhvv" data-callback="onCaptchaSuccess"></div>
         </form>
         <div id="error" class="error"></div>
     </div>
 
     <script>
         // Конфигурация
-        const BACKEND_URL = 'http://localhost:3000';
-        const RECAPTCHA_SITE_KEY = 'YOUR_RECAPTCHA_SITE_KEY';
+        const BACKEND_URL = 'https://linkre.info';
+        const RECAPTCHA_SITE_KEY = '6Lfdp0QtAAAAABx9wQ9WyWmi9z0R_kSjzKhwWhvv';
 
         // Получаем short_code из URL /l/{short_code}
         const pathParts = window.location.pathname.split('/');
