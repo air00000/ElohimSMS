@@ -6,6 +6,7 @@ use crate::{
     state::AppState,
 };
 use axum::{extract::State, http::HeaderMap, Json};
+// HeaderMap используется из axum::http выше
 use rand::Rng as _;
 use serde_json::Value;
 use tracing::{info, instrument};

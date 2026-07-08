@@ -39,7 +39,7 @@ pub fn detect_country_code(phone: &str) -> Result<String, AppError> {
 
     // Список префиксов отсортирован по убыванию длины, чтобы сначала
     // проверялись более длинные (трёхзначные) коды.
-    let prefixes: [(&str, &str); 40] = [
+    let prefixes: [(&str, &str); 41] = [
         ("994", "AZ"),
         ("375", "BY"),
         ("374", "AM"),

@@ -1,7 +1,7 @@
 use crate::{
     error::AppError,
     models::{
-        Admin, ApiKeyListItem, BotSendSmsRequest, Campaign, CreateAdminRequest,
+        Admin, ApiKey, ApiKeyListItem, BotSendSmsRequest, Campaign, CreateAdminRequest,
         CreateKeyRequest, CreateKeyResponse, CreateTemplateRequest, EnsureOwnerRequest,
         SendCampaignRequest, SendCampaignResponse, SendSmsResponse, StatsResponse, Template,
         UpdateSenderNameRequest,
@@ -11,7 +11,8 @@ use crate::{
     state::AppState,
 };
 use axum::{
-    extract::{HeaderMap, Host, Path, State},
+    extract::{Host, Path, State},
+    http::HeaderMap,
     Json,
 };
 use rand::Rng as _;
@@ -30,7 +31,7 @@ fn request_scheme(headers: &HeaderMap, default: &str) -> String {
 }
 
 /// Рендерит шаблон, подставляя placeholders.
-fn render_template(template: &str, link: &str, phone: &str, country: &str) -> String {
+pub(crate) fn render_template(template: &str, link: &str, phone: &str, country: &str) -> String {
     template
         .replace("{link}", link)
         .replace("{phone}", phone)
@@ -623,11 +624,7 @@ pub async fn redirect(
 
     if let Some(tid) = admin_telegram_id {
         let text = format!(
-            "🔗 <b>Переход по ссылке</b>\n\n"
-            "<b>Кампания:</b> <code>{}</code>\n"
-            "<b>Номер:</b> <code>{}</code>\n"
-            "<b>Страна:</b> {}\n"
-            "<b>Время:</b> {}",
+            "🔗 <b>Переход по ссылке</b>\n\n<b>Кампания:</b> <code>{}</code>\n<b>Номер:</b> <code>{}</code>\n<b>Страна:</b> {}\n<b>Время:</b> {}",
             campaign.id,
             campaign.phone,
             campaign.country_code,
