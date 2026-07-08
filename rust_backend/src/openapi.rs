@@ -2,7 +2,7 @@ use crate::models::{
     Admin, ApiKeyListItem, BotSendSmsRequest, Campaign, CreateAdminRequest, CreateKeyRequest,
     CreateKeyResponse, CreateTemplateRequest, EnsureOwnerRequest, HealthResponse,
     SendCampaignRequest, SendCampaignResponse, SendSmsRequest, SendSmsResponse, SmsLog,
-    StatsResponse, Template, UpdateSenderNameRequest,
+    Template, UpdateSenderNameRequest,
 };
 use utoipa::openapi::security::{ApiKey as SecurityApiKey, ApiKeyValue, SecurityScheme};
 use utoipa::{Modify, OpenApi};
@@ -45,7 +45,6 @@ impl Modify for SecurityAddon {
         crate::routes::bot::set_favorite_template,
         crate::routes::bot::bot_send_sms,
         crate::routes::bot::send_campaign,
-        crate::routes::bot::stats,
     ),
     components(
         schemas(
@@ -66,7 +65,6 @@ impl Modify for SecurityAddon {
             BotSendSmsRequest,
             UpdateSenderNameRequest,
             EnsureOwnerRequest,
-            StatsResponse,
         )
     ),
     modifiers(&SecurityAddon),
