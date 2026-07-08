@@ -23,8 +23,8 @@ pub async fn require_api_key(
         .and_then(|v| v.to_str().ok())
         .ok_or(AppError::Unauthorized)?;
 
-    // Разрешаем глобальный мастер-ключ из конфигурации.
-    if key == state.api_key {
+    // Разрешаем глобальный мастер-ключ из конфигурации, если он задан.
+    if state.api_key.as_deref() == Some(key) {
         return Ok(next.run(request).await);
     }
 

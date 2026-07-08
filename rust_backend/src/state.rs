@@ -6,7 +6,7 @@ use std::sync::Arc;
 pub struct AppState {
     pub pool: PgPool,
     pub sms_client: Arc<SmsClient>,
-    pub api_key: String,
+    pub api_key: Option<String>,
     pub internal_bot_token: String,
     pub bot_internal_url: String,
     pub http_client: reqwest::Client,

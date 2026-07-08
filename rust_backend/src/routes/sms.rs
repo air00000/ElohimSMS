@@ -216,7 +216,7 @@ async fn resolve_key_owner(
         .and_then(|v| v.to_str().ok())
         .ok_or(AppError::Unauthorized)?;
 
-    if key == state.api_key {
+    if state.api_key.as_deref() == Some(key) {
         return Ok((None, None));
     }
 

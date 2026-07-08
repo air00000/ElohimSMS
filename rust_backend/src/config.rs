@@ -4,7 +4,7 @@ use std::net::SocketAddr;
 pub struct Config {
     pub database_url: String,
     pub bind_address: SocketAddr,
-    pub api_key: String,
+    pub api_key: Option<String>,
     pub internal_bot_token: String,
     pub bot_internal_url: String,
     pub sms_gateway_url: String,
@@ -25,7 +25,9 @@ impl Config {
             .parse()?;
 
         let api_key = std::env::var("API_KEY")
-            .map_err(|_| anyhow::anyhow!("API_KEY must be set"))?;
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
 
         let internal_bot_token = std::env::var("INTERNAL_BOT_TOKEN")
             .map_err(|_| anyhow::anyhow!("INTERNAL_BOT_TOKEN must be set"))?;
