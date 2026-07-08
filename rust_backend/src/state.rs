@@ -1,4 +1,4 @@
-use crate::{captcha::CaptchaVerifier, config::Config, sms::SmsClient};
+use crate::{config::Config, sms::SmsClient};
 use sqlx::PgPool;
 use std::sync::Arc;
 
@@ -6,9 +6,10 @@ use std::sync::Arc;
 pub struct AppState {
     pub pool: PgPool,
     pub sms_client: Arc<SmsClient>,
-    pub captcha_verifier: Arc<CaptchaVerifier>,
+    pub api_key: String,
     pub internal_bot_token: String,
-    pub captcha_site_url: String,
+    pub bot_internal_url: String,
+    pub http_client: reqwest::Client,
 }
 
 impl AppState {
@@ -16,9 +17,10 @@ impl AppState {
         Self {
             pool,
             sms_client,
-            captcha_verifier: Arc::new(CaptchaVerifier::new(config)),
+            api_key: config.api_key.clone(),
             internal_bot_token: config.internal_bot_token.clone(),
-            captcha_site_url: config.captcha_site_url.clone(),
+            bot_internal_url: config.bot_internal_url.clone(),
+            http_client: reqwest::Client::new(),
         }
     }
 }

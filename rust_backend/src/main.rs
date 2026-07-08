@@ -1,16 +1,12 @@
-mod captcha;
 mod config;
 mod db;
 mod error;
-mod links;
 mod models;
 mod openapi;
-mod pagination;
 mod phone;
 mod routes;
 mod sms;
 mod state;
-mod templates;
 
 use crate::{
     config::Config,
@@ -75,26 +71,6 @@ async fn main() -> anyhow::Result<()> {
 
     let pool = init_db(&config.database_url).await?;
     tracing::info!("Database connected and migrations applied");
-
-    // Создаём первого владельца из переменной окружения, если указана
-    if let Ok(owner_id) = std::env::var("OWNER_TELEGRAM_ID") {
-        let owner_id: i64 = owner_id.parse()?;
-        let username = std::env::var("OWNER_USERNAME").ok();
-
-        sqlx::query(
-            r#"
-            INSERT INTO admins (telegram_id, username, is_owner)
-            VALUES ($1, $2, TRUE)
-            ON CONFLICT (telegram_id) DO UPDATE SET is_owner = TRUE, username = EXCLUDED.username
-            "#
-        )
-        .bind(owner_id)
-        .bind(username)
-        .execute(&pool)
-        .await?;
-
-        tracing::info!("Owner admin ensured: telegram_id={}", owner_id);
-    }
 
     let sms_config = SmsGatewayConfig::from(&config);
     let sms_client = Arc::new(SmsClient::new(sms_config));

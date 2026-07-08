@@ -1,25 +1,49 @@
-from aiogram import Router
-from aiogram.filters import Command
-from aiogram.types import Message
+from aiogram import Router, types
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 
+from handlers.common import BTN_SEND_CAMPAIGN, main_menu_keyboard
 from services.api import api
 
 router = Router()
 
 
-@router.message(Command("send_campaign"))
-async def cmd_send_campaign(message: Message):
-    parts = message.text.split(maxsplit=2)
-    if len(parts) < 3:
-        await message.answer(
-            "❌ Использование: /send_campaign &lt;номер&gt; &lt;ссылка&gt;\n\n"
-            "Пример:\n"
-            "/send_campaign +19005551234 https://example.com"
-        )
+class CampaignFSM(StatesGroup):
+    waiting_phone = State()
+    waiting_url = State()
+
+
+@router.message(lambda m: m.text == BTN_SEND_CAMPAIGN)
+async def btn_send_campaign(message: types.Message, state: FSMContext):
+    await state.set_state(CampaignFSM.waiting_phone)
+    await message.answer(
+        "📨 <b>Отправка кампании</b>\n\n"
+        "Введите номер телефона получателя в международном формате:",
+        parse_mode="HTML",
+    )
+
+
+@router.message(CampaignFSM.waiting_phone)
+async def process_campaign_phone(message: types.Message, state: FSMContext):
+    phone = message.text.strip()
+    if not phone.startswith("+"):
+        await message.answer("❌ Номер должен начинаться с '+' и кода страны.")
         return
 
-    phone = parts[1].strip()
-    url = parts[2].strip()
+    await state.update_data(phone=phone)
+    await state.set_state(CampaignFSM.waiting_url)
+    await message.answer("Введите целевую ссылку (URL):")
+
+
+@router.message(CampaignFSM.waiting_url)
+async def process_campaign_url(message: types.Message, state: FSMContext):
+    url = message.text.strip()
+    if not url.startswith(("http://", "https://")):
+        await message.answer("❌ Ссылка должна начинаться с http:// или https://")
+        return
+
+    data = await state.get_data()
+    phone = data["phone"]
 
     await message.answer("⏳ Отправка кампании...")
 
@@ -28,6 +52,8 @@ async def cmd_send_campaign(message: Message):
     except Exception as e:
         await message.answer(f"❌ Ошибка отправки кампании: {e}")
         return
+    finally:
+        await state.clear()
 
     status = "✅" if result.get("success") else "❌"
     await message.answer(
@@ -36,5 +62,6 @@ async def cmd_send_campaign(message: Message):
         f"<b>Короткая ссылка:</b> {result.get('short_link')}\n"
         f"<b>Сообщение:</b> <code>{result.get('message')}</code>\n\n"
         f"<b>Ответ шлюза:</b> <code>{result.get('provider_response')}</code>",
+        reply_markup=main_menu_keyboard(),
         parse_mode="HTML",
     )

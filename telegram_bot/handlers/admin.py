@@ -1,22 +1,36 @@
-from aiogram import Router
-from aiogram.filters import Command
-from aiogram.types import Message
+from aiogram import F, Router, types
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+from handlers.common import BTN_ADMINS, main_menu_keyboard
 from services.api import api
 
 router = Router()
 
 
+class AddAdminFSM(StatesGroup):
+    waiting_id = State()
+
+
 async def is_owner(user_id: int) -> bool:
-    admins = await api.list_admins()
+    try:
+        admins = await api.list_admins()
+    except Exception:
+        return False
     for admin in admins:
-        if admin["telegram_id"] == user_id:
-            return admin.get("is_owner", False)
+        if admin.get("telegram_id") == user_id and admin.get("is_owner"):
+            return True
     return False
 
 
-@router.message(Command("list_admins"))
-async def cmd_list_admins(message: Message):
+@router.message(lambda m: m.text == BTN_ADMINS)
+async def btn_admins(message: types.Message):
+    if not await is_owner(message.from_user.id):
+        await message.answer("⛔ Только владелец может управлять администраторами.")
+        return
+
     try:
         admins = await api.list_admins()
     except Exception as e:
@@ -24,79 +38,95 @@ async def cmd_list_admins(message: Message):
         return
 
     if not admins:
-        await message.answer("Администраторов пока нет.")
+        await message.answer(
+            "Администраторов пока нет.",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="➕ Добавить админа", callback_data="admin:add")]
+                ]
+            ),
+        )
         return
 
     lines = ["👥 <b>Список администраторов:</b>"]
     for admin in admins:
         owner_badge = " 👑" if admin.get("is_owner") else ""
         username = f" @{admin.get('username')}" if admin.get("username") else ""
-        lines.append(f"• <code>{admin['telegram_id']}</code>{username}{owner_badge}")
-
-    await message.answer("\n".join(lines), parse_mode="HTML")
-
-
-@router.message(Command("add_admin"))
-async def cmd_add_admin(message: Message):
-    if not await is_owner(message.from_user.id):
-        await message.answer("⛔ Только владелец может назначать администраторов.")
-        return
-
-    parts = message.text.split(maxsplit=2)
-    if len(parts) < 2:
-        await message.answer(
-            "❌ Использование: /add_admin &lt;telegram_id&gt; [username]"
+        lines.append(
+            f"• <code>{admin['telegram_id']}</code>{username}{owner_badge}"
         )
+
+    builder = InlineKeyboardBuilder()
+    builder.button(text="➕ Добавить админа", callback_data="admin:add")
+    for admin in admins:
+        if not admin.get("is_owner"):
+            builder.button(
+                text=f"❌ Удалить {admin['telegram_id']}",
+                callback_data=f"admin:remove:{admin['telegram_id']}",
+            )
+    builder.adjust(1, 1)
+
+    await message.answer(
+        "\n".join(lines),
+        reply_markup=builder.as_markup(),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data == "admin:add")
+async def cb_admin_add(query: types.CallbackQuery, state: FSMContext):
+    await state.set_state(AddAdminFSM.waiting_id)
+    await query.message.answer(
+        "Введите <b>telegram_id</b> нового администратора.\n"
+        "Можно сразу через пробел указать username (без @).\n\n"
+        "Пример: <code>123456789 ivanov</code>",
+        parse_mode="HTML",
+    )
+    await query.answer()
+
+
+@router.message(AddAdminFSM.waiting_id)
+async def process_admin_id(message: types.Message, state: FSMContext):
+    parts = message.text.strip().split(maxsplit=1)
+    if not parts:
+        await message.answer("❌ Введите telegram_id.")
         return
 
     try:
-        telegram_id = int(parts[1])
+        telegram_id = int(parts[0])
     except ValueError:
         await message.answer("❌ telegram_id должен быть числом.")
         return
 
-    username = parts[2] if len(parts) > 2 else None
+    username = parts[1].strip() if len(parts) > 1 else None
 
     try:
         admin = await api.create_admin(telegram_id, username)
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
         return
+    finally:
+        await state.clear()
 
     await message.answer(
         f"✅ Администратор <code>{admin['telegram_id']}</code> добавлен.",
+        reply_markup=main_menu_keyboard(is_owner=True),
         parse_mode="HTML",
     )
 
 
-@router.message(Command("remove_admin"))
-async def cmd_remove_admin(message: Message):
-    if not await is_owner(message.from_user.id):
-        await message.answer("⛔ Только владелец может снимать администраторов.")
-        return
-
-    parts = message.text.split(maxsplit=1)
-    if len(parts) < 2:
-        await message.answer("❌ Использование: /remove_admin &lt;telegram_id&gt;")
-        return
-
-    try:
-        telegram_id = int(parts[1])
-    except ValueError:
-        await message.answer("❌ telegram_id должен быть числом.")
-        return
-
-    if telegram_id == message.from_user.id:
-        await message.answer("❌ Вы не можете удалить самого себя.")
-        return
+@router.callback_query(F.data.startswith("admin:remove:"))
+async def cb_admin_remove(query: types.CallbackQuery):
+    telegram_id = int(query.data.split(":")[-1])
 
     try:
         await api.remove_admin(telegram_id)
     except Exception as e:
-        await message.answer(f"❌ Ошибка: {e}")
+        await query.answer(f"Ошибка: {e}", show_alert=True)
         return
 
-    await message.answer(
+    await query.answer("Администратор удалён")
+    await query.message.answer(
         f"✅ Администратор <code>{telegram_id}</code> удалён.",
         parse_mode="HTML",
     )

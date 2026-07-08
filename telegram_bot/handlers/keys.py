@@ -1,27 +1,39 @@
-from aiogram import Router
-from aiogram.filters import Command
-from aiogram.types import Message
+from aiogram import F, Router, types
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+from handlers.common import BTN_KEYS, main_menu_keyboard
 from services.api import api
 
 router = Router()
 
 
-@router.message(Command("list_keys"))
-async def cmd_list_keys(message: Message):
+class CreateKeyFSM(StatesGroup):
+    waiting_name = State()
+
+
+@router.message(lambda m: m.text == BTN_KEYS)
+async def btn_keys(message: types.Message):
     try:
-        result = await api.list_keys()
-        keys = result.get("data", [])
-        total = result.get("total", 0)
+        keys = await api.list_keys()
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
         return
 
     if not keys:
-        await message.answer("API-ключей пока нет.")
+        await message.answer(
+            "API-ключей пока нет.",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="➕ Создать ключ", callback_data="key:create")]
+                ]
+            ),
+        )
         return
 
-    lines = [f"🔑 <b>Список API-ключей</b> (всего: {total}):"]
+    lines = [f"🔑 <b>Список API-ключей</b> (всего: {len(keys)}):"]
     for key in keys:
         status = "🟢" if key.get("is_active") else "🔴"
         created = key.get("created_at", "")[:10]
@@ -31,47 +43,67 @@ async def cmd_list_keys(message: Message):
             f"   Создан: {created}"
         )
 
-    await message.answer("\n\n".join(lines), parse_mode="HTML")
+    builder = InlineKeyboardBuilder()
+    builder.button(text="➕ Создать ключ", callback_data="key:create")
+    for key in keys:
+        if key.get("is_active"):
+            builder.button(
+                text=f"❌ Отозвать {key['name']}",
+                callback_data=f"key:revoke:{key['id']}",
+            )
+    builder.adjust(1, 1)
+
+    await message.answer(
+        "\n\n".join(lines),
+        reply_markup=builder.as_markup(),
+        parse_mode="HTML",
+    )
 
 
-@router.message(Command("create_key"))
-async def cmd_create_key(message: Message):
-    parts = message.text.split(maxsplit=1)
-    if len(parts) < 2:
-        await message.answer("❌ Использование: /create_key &lt;название&gt;")
+@router.callback_query(F.data == "key:create")
+async def cb_key_create(query: types.CallbackQuery, state: FSMContext):
+    await state.set_state(CreateKeyFSM.waiting_name)
+    await query.message.answer("Введите название для нового API-ключа:")
+    await query.answer()
+
+
+@router.message(CreateKeyFSM.waiting_name)
+async def process_key_name(message: types.Message, state: FSMContext):
+    name = message.text.strip()
+    if not name:
+        await message.answer("❌ Название не может быть пустым.")
         return
-
-    name = parts[1].strip()
 
     try:
         key = await api.create_key(name, message.from_user.id)
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
         return
+    finally:
+        await state.clear()
 
     await message.answer(
-        f"✅ API-ключ создан.\n\n"
+        "✅ API-ключ создан.\n\n"
         f"<b>Название:</b> {key['name']}\n"
         f"<b>ID:</b> <code>{key['id']}</code>\n"
         f"<b>Ключ:</b> <code>{key['key']}</code>\n\n"
-        f"⚠️ Сохраните ключ сейчас, он больше не будет показан.",
+        "⚠️ Сохраните ключ сейчас, он больше не будет показан.",
+        reply_markup=main_menu_keyboard(),
         parse_mode="HTML",
     )
 
 
-@router.message(Command("revoke_key"))
-async def cmd_revoke_key(message: Message):
-    parts = message.text.split(maxsplit=1)
-    if len(parts) < 2:
-        await message.answer("❌ Использование: /revoke_key &lt;id&gt;")
-        return
-
-    key_id = parts[1].strip()
-
+@router.callback_query(F.data.startswith("key:revoke:"))
+async def cb_key_revoke(query: types.CallbackQuery):
+    key_id = query.data.split(":")[-1]
     try:
         await api.revoke_key(key_id)
     except Exception as e:
-        await message.answer(f"❌ Ошибка: {e}")
+        await query.answer(f"Ошибка: {e}", show_alert=True)
         return
 
-    await message.answer(f"✅ Ключ <code>{key_id}</code> отозван.", parse_mode="HTML")
+    await query.answer("Ключ отозван")
+    await query.message.answer(
+        f"✅ Ключ <code>{key_id}</code> отозван.",
+        parse_mode="HTML",
+    )

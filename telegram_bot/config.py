@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     api_base_url: str = "http://localhost:3000"
     internal_bot_token: str
     owner_telegram_id: int
+    owner_username: str | None = None
 
     # Режим работы: polling или webhook
     bot_mode: str = "polling"

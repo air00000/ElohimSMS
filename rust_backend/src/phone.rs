@@ -30,26 +30,68 @@ pub fn normalize_phone(phone: &str) -> Result<String, AppError> {
     Ok(format!("+{}", digits_only))
 }
 
+/// Определяет двухбуквенный код страны по международному префиксу.
+/// Покрывает наиболее распространённые страны; если код не распознан,
+/// возвращает ошибку.
 pub fn detect_country_code(phone: &str) -> Result<String, AppError> {
     let normalized = normalize_phone(phone)?;
+    let digits: String = normalized.chars().filter(|c| c.is_ascii_digit()).collect();
 
-    let parsed = phonenumber::parse(None, &normalized).map_err(|e| {
-        AppError::BadRequest(format!("Failed to parse phone number: {e}"))
-    })?;
+    // Список префиксов отсортирован по убыванию длины, чтобы сначала
+    // проверялись более длинные (трёхзначные) коды.
+    let prefixes: [(&str, &str); 40] = [
+        ("994", "AZ"),
+        ("375", "BY"),
+        ("374", "AM"),
+        ("373", "MD"),
+        ("372", "EE"),
+        ("371", "LV"),
+        ("370", "LT"),
+        ("380", "UA"),
+        ("992", "TJ"),
+        ("995", "GE"),
+        ("996", "KG"),
+        ("998", "UZ"),
+        ("972", "IL"),
+        ("971", "AE"),
+        ("966", "SA"),
+        ("49", "DE"),
+        ("44", "GB"),
+        ("33", "FR"),
+        ("39", "IT"),
+        ("34", "ES"),
+        ("41", "CH"),
+        ("43", "AT"),
+        ("31", "NL"),
+        ("32", "BE"),
+        ("45", "DK"),
+        ("46", "SE"),
+        ("47", "NO"),
+        ("48", "PL"),
+        ("90", "TR"),
+        ("20", "EG"),
+        ("27", "ZA"),
+        ("91", "IN"),
+        ("92", "PK"),
+        ("86", "CN"),
+        ("81", "JP"),
+        ("82", "KR"),
+        ("65", "SG"),
+        ("61", "AU"),
+        ("64", "NZ"),
+        ("7", "RU"),
+        ("1", "US"),
+    ];
 
-    if !phonenumber::is_valid(&parsed) {
-        return Err(AppError::BadRequest("Phone number is not valid".to_string()));
+    for (prefix, country) in prefixes {
+        if digits.starts_with(prefix) {
+            return Ok(country.to_string());
+        }
     }
 
-    let country_code = parsed
-        .country()
-        .id()
-        .map(|id| id.as_ref().to_string())
-        .ok_or_else(|| {
-            AppError::BadRequest("Could not detect country from phone number".to_string())
-        })?;
-
-    Ok(country_code.to_uppercase())
+    Err(AppError::BadRequest(format!(
+        "Could not detect country code for phone {phone}"
+    )))
 }
 
 #[cfg(test)]
@@ -75,12 +117,10 @@ mod tests {
     }
 
     #[test]
-    fn test_detect_country_us() {
+    fn test_detect_country() {
         assert_eq!(detect_country_code("+19005551234").unwrap(), "US");
-    }
-
-    #[test]
-    fn test_detect_country_gb() {
         assert_eq!(detect_country_code("+447123456789").unwrap(), "GB");
+        assert_eq!(detect_country_code("+4915112345678").unwrap(), "DE");
+        assert_eq!(detect_country_code("+79991234567").unwrap(), "RU");
     }
 }

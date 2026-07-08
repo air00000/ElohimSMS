@@ -1,15 +1,23 @@
 use crate::{
     error::AppError,
-    models::{SendSmsRequest, SendSmsResponse, SmsLog},
-    phone::normalize_phone,
+    models::{Campaign, SendSmsRequest, SendSmsResponse, SmsLog, Template},
+    phone::{detect_country_code, normalize_phone},
+    routes::{auth::hash_api_key, bot::render_template},
     state::AppState,
 };
-use axum::{
-    extract::{Extension, State},
-    Json,
-};
+use axum::{extract::State, http::HeaderMap, Json};
+use rand::Rng as _;
 use serde_json::Value;
 use tracing::{info, instrument};
+use uuid::Uuid;
+
+struct SendOutcome {
+    success: bool,
+    message: String,
+    provider_response: Value,
+    campaign_id: Option<Uuid>,
+    short_link: Option<String>,
+}
 
 #[utoipa::path(
     post,
@@ -25,98 +33,234 @@ use tracing::{info, instrument};
         ("api_key" = [])
     )
 )]
-#[instrument(skip(state, payload), fields(phone = %payload.phone))]
+#[instrument(skip(state, headers, payload), fields(phone = %payload.phone))]
 pub async fn send_sms(
     State(state): State<AppState>,
-    Extension(api_key_id): Extension<uuid::Uuid>,
+    headers: HeaderMap,
     Json(payload): Json<SendSmsRequest>,
 ) -> Result<Json<SendSmsResponse>, AppError> {
     let phone = normalize_phone(&payload.phone)?;
-    let message = payload.message.trim();
+    let target_url = payload.message.trim();
 
-    if message.is_empty() {
+    if target_url.is_empty() {
         return Err(AppError::BadRequest("Message is required".to_string()));
     }
 
-    info!(api_key_id = %api_key_id, "Sending SMS");
+    let (api_key_id, sender_name) = resolve_key_owner(&state, &headers).await?;
+    let country_code = detect_country_code(&phone)?;
 
-    let result = state
-        .sms_client
-        .send_sms(&phone, message)
-        .await
-        .map_err(|e| AppError::Internal(format!("SMS gateway error: {e}")))?;
-
-    let status = if result.success { "sent" } else { "failed" };
-
-    sqlx::query_as::<_, SmsLog>(
-        "INSERT INTO sms_logs (api_key_id, telegram_id, phone, message, status, provider_response) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *"
+    let template = sqlx::query_as::<_, Template>(
+        "SELECT * FROM templates WHERE country_code = $1 AND is_active = TRUE AND is_favorite = TRUE LIMIT 1",
     )
-    .bind(api_key_id)
-    .bind(payload.telegram_id)
-    .bind(phone)
-    .bind(message)
+    .bind(&country_code)
+    .fetch_optional(&state.pool)
+    .await?;
+
+    let outcome = if let Some(template) = template {
+        send_api_campaign(
+            &state,
+            &headers,
+            &phone,
+            target_url,
+            &country_code,
+            &template,
+            api_key_id,
+            sender_name.as_deref(),
+        )
+        .await?
+    } else {
+        send_api_plain_sms(
+            &state,
+            &phone,
+            target_url,
+            api_key_id,
+            sender_name.as_deref(),
+        )
+        .await?
+    };
+
+    let status = if outcome.success { "sent" } else { "failed" };
+    sqlx::query_as::<_, SmsLog>(
+        "INSERT INTO sms_logs (phone, message, status, provider_response, api_key_id, campaign_id)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         RETURNING id, phone, message, status, provider_response, created_at"
+    )
+    .bind(&phone)
+    .bind(&outcome.message)
     .bind(status)
-    .bind(&result.provider_response)
+    .bind(&outcome.provider_response)
+    .bind(api_key_id)
+    .bind(outcome.campaign_id)
     .fetch_one(&state.pool)
     .await?;
 
     Ok(Json(SendSmsResponse {
-        success: result.success,
-        message: if result.success {
-            "SMS accepted by gateway".to_string()
+        success: outcome.success,
+        message: if outcome.success {
+            if outcome.campaign_id.is_some() {
+                "Campaign sent via API".to_string()
+            } else {
+                "SMS accepted by gateway".to_string()
+            }
         } else {
             "SMS gateway rejected the message".to_string()
         },
-        provider_response: Some(result.provider_response),
+        provider_response: Some(outcome.provider_response),
+        campaign_id: outcome.campaign_id,
+        short_link: outcome.short_link,
     }))
 }
 
-#[utoipa::path(
-    get,
-    path = "/api/v1/sms/balance",
-    responses(
-        (status = 200, description = "Gateway balance", body = Value),
-        (status = 401, description = "Unauthorized"),
-        (status = 429, description = "Too many requests")
-    ),
-    security(
-        ("api_key" = [])
-    )
-)]
-pub async fn get_balance(
-    State(state): State<AppState>,
-    Extension(_api_key_id): Extension<uuid::Uuid>,
-) -> Result<Json<Value>, AppError> {
-    let balance = state
-        .sms_client
-        .get_balance()
-        .await
-        .map_err(|e| AppError::Internal(format!("Failed to get balance: {e}")))?;
+async fn send_api_campaign(
+    state: &AppState,
+    headers: &HeaderMap,
+    phone: &str,
+    target_url: &str,
+    country_code: &str,
+    template: &Template,
+    api_key_id: Option<Uuid>,
+    sender_name: Option<&str>,
+) -> Result<SendOutcome, AppError> {
+    let short_code = generate_short_code(state).await?;
 
-    Ok(Json(balance))
+    let host = headers
+        .get(axum::http::header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("localhost");
+    let scheme = headers
+        .get("X-Forwarded-Proto")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_lowercase())
+        .filter(|s| s == "http" || s == "https")
+        .unwrap_or_else(|| {
+            if state.bot_internal_url.starts_with("https") {
+                "https".to_string()
+            } else {
+                "http".to_string()
+            }
+        });
+    let short_link = format!("{}://{}/r/{}", scheme, host, short_code);
+
+    let rendered = render_template(&template.text, &short_link, phone, country_code);
+
+    info!(phone = %phone, short_code = %short_code, "Sending API campaign");
+
+    let result = state
+        .sms_client
+        .send_sms(phone, &rendered, sender_name)
+        .await
+        .map_err(|e| AppError::Internal(format!("SMS gateway error: {e}")))?;
+
+    let status = if result.success { "sent" } else { "failed" };
+    let sent_at = if result.success { Some(chrono::Utc::now()) } else { None };
+
+    let campaign = sqlx::query_as::<_, Campaign>(
+        "INSERT INTO campaigns
+         (short_code, target_url, phone, country_code, message, status, api_key_id, provider_response, sent_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         RETURNING *"
+    )
+    .bind(&short_code)
+    .bind(target_url)
+    .bind(phone)
+    .bind(country_code)
+    .bind(&rendered)
+    .bind(status)
+    .bind(api_key_id)
+    .bind(&result.provider_response)
+    .bind(sent_at)
+    .fetch_one(&state.pool)
+    .await?;
+
+    Ok(SendOutcome {
+        success: result.success,
+        message: rendered,
+        provider_response: result.provider_response,
+        campaign_id: Some(campaign.id),
+        short_link: Some(short_link),
+    })
 }
 
-#[utoipa::path(
-    get,
-    path = "/api/v1/sms/routes",
-    responses(
-        (status = 200, description = "Available routes", body = Value),
-        (status = 401, description = "Unauthorized"),
-        (status = 429, description = "Too many requests")
-    ),
-    security(
-        ("api_key" = [])
-    )
-)]
-pub async fn get_routes(
-    State(state): State<AppState>,
-    Extension(_api_key_id): Extension<uuid::Uuid>,
-) -> Result<Json<Value>, AppError> {
-    let routes = state
-        .sms_client
-        .get_routes()
-        .await
-        .map_err(|e| AppError::Internal(format!("Failed to get routes: {e}")))?;
+async fn send_api_plain_sms(
+    state: &AppState,
+    phone: &str,
+    message: &str,
+    api_key_id: Option<Uuid>,
+    sender_name: Option<&str>,
+) -> Result<SendOutcome, AppError> {
+    let _ = api_key_id;
+    info!(phone = %phone, "Sending plain SMS via API");
 
-    Ok(Json(routes))
+    let result = state
+        .sms_client
+        .send_sms(phone, message, sender_name)
+        .await
+        .map_err(|e| AppError::Internal(format!("SMS gateway error: {e}")))?;
+
+    Ok(SendOutcome {
+        success: result.success,
+        message: message.to_string(),
+        provider_response: result.provider_response,
+        campaign_id: None,
+        short_link: None,
+    })
+}
+
+async fn resolve_key_owner(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<(Option<Uuid>, Option<String>), AppError> {
+    let key = headers
+        .get("X-API-Key")
+        .and_then(|v| v.to_str().ok())
+        .ok_or(AppError::Unauthorized)?;
+
+    if key == state.api_key {
+        return Ok((None, None));
+    }
+
+    let key_hash = hash_api_key(key);
+    let row = sqlx::query_as::<_, (Uuid, Option<i64>)>(
+        "SELECT id, created_by_telegram_id FROM api_keys WHERE key_hash = $1 AND is_active = TRUE"
+    )
+    .bind(&key_hash)
+    .fetch_optional(&state.pool)
+    .await?;
+
+    let (id, owner_tid) = row.ok_or(AppError::Unauthorized)?;
+
+    let sender_name = if let Some(tid) = owner_tid {
+        sqlx::query_scalar::<_, Option<String>>(
+            "SELECT sender_name FROM admins WHERE telegram_id = $1"
+        )
+        .bind(tid)
+        .fetch_optional(&state.pool)
+        .await?
+        .flatten()
+    } else {
+        None
+    };
+
+    Ok((Some(id), sender_name))
+}
+
+async fn generate_short_code(state: &AppState) -> Result<String, AppError> {
+    loop {
+        let code: String = rand::thread_rng()
+            .sample_iter(&rand::distributions::Alphanumeric)
+            .take(8)
+            .map(char::from)
+            .collect();
+
+        let exists = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM campaigns WHERE short_code = $1)",
+        )
+        .bind(&code)
+        .fetch_one(&state.pool)
+        .await?;
+
+        if !exists {
+            return Ok(code);
+        }
+    }
 }

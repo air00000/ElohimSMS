@@ -29,7 +29,12 @@ impl SmsClient {
     /// Документация: PUT /api/send-sms
     /// Body: { route, sender_id, number, message }
     #[instrument(skip(self), fields(phone = %phone))]
-    pub async fn send_sms(&self, phone: &str, message: &str) -> anyhow::Result<SmsResult> {
+    pub async fn send_sms(
+        &self,
+        phone: &str,
+        message: &str,
+        sender_id: Option<&str>,
+    ) -> anyhow::Result<SmsResult> {
         if self.config.base_url.is_empty() || self.config.base_url.contains("example.com") {
             return Ok(SmsResult {
                 success: true,
@@ -42,10 +47,13 @@ impl SmsClient {
         }
 
         let url = format!("{}/api/send-sms", self.config.base_url);
+        let sender = sender_id
+            .filter(|s| !s.is_empty())
+            .unwrap_or(&self.config.sender_id);
 
         let body = json!({
             "route": self.config.route,
-            "sender_id": self.config.sender_id,
+            "sender_id": sender,
             "number": phone,
             "message": message,
         });
@@ -53,7 +61,7 @@ impl SmsClient {
         debug!(
             url = %url,
             route = %self.config.route,
-            sender_id = %self.config.sender_id,
+            sender_id = %sender,
             "Sending SMS via Devil-Traff"
         );
 
@@ -88,48 +96,24 @@ impl SmsClient {
         })
     }
 
-    /// Получает баланс пользователя.
-    #[instrument(skip(self))]
-    pub async fn get_balance(&self) -> anyhow::Result<Value> {
-        let url = format!("{}/api/get-balance", self.config.base_url);
-
-        let response = self
-            .client
-            .get(&url)
-            .bearer_auth(&self.config.auth_token)
-            .send()
-            .await
-            .context("Failed to get balance from Devil-Traff")?;
-
-        let status = response.status();
-        let body = response
-            .json::<Value>()
-            .await
-            .unwrap_or_else(|_| json!({ "raw": "non-json response" }));
-
-        if !status.is_success() {
-            anyhow::bail!(
-                "Devil-Traff returned error status {}: {}",
-                status,
-                body
-            );
+    /// Запрашивает баланс у SMS-шлюза.
+    pub async fn get_balance(&self) -> anyhow::Result<serde_json::Value> {
+        if self.config.base_url.is_empty() || self.config.base_url.contains("example.com") {
+            return Ok(json!({
+                "mock": true,
+                "balance": "N/A",
+                "message": "SMS gateway URL is not configured",
+            }));
         }
 
-        Ok(body)
-    }
-
-    /// Получает список доступных маршрутов.
-    #[instrument(skip(self))]
-    pub async fn get_routes(&self) -> anyhow::Result<Value> {
-        let url = format!("{}/api/get-routes", self.config.base_url);
-
+        let url = format!("{}/api/balance", self.config.base_url);
         let response = self
             .client
-            .get(&url)
+            .request(Method::GET, &url)
             .bearer_auth(&self.config.auth_token)
             .send()
             .await
-            .context("Failed to get routes from Devil-Traff")?;
+            .context("Failed to request SMS gateway balance")?;
 
         let status = response.status();
         let body = response
@@ -138,10 +122,10 @@ impl SmsClient {
             .unwrap_or_else(|_| json!({ "raw": "non-json response" }));
 
         if !status.is_success() {
-            anyhow::bail!(
-                "Devil-Traff returned error status {}: {}",
-                status,
-                body
+            tracing::warn!(
+                status = %status,
+                response = %body,
+                "SMS gateway balance request returned error"
             );
         }
 

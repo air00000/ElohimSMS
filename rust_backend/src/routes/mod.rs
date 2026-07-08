@@ -1,16 +1,12 @@
-pub mod admin;
 pub mod auth;
-pub mod campaigns;
+pub mod bot;
 pub mod health;
-pub mod keys;
-pub mod links;
 pub mod sms;
-pub mod templates;
 
 use crate::{openapi::ApiDoc, state::AppState};
 use axum::{
     middleware,
-    routing::{get, post},
+    routing::{delete, get, post},
     Router,
 };
 use std::sync::Arc;
@@ -23,10 +19,8 @@ use utoipa_swagger_ui::SwaggerUi;
 pub fn create_router(state: AppState) -> Router {
     let public_routes = Router::new()
         .route("/health", get(health::health))
-        .route("/api/v1/links/:short_code", get(links::get_link_info))
-        .route("/api/v1/links/:short_code/verify", post(links::verify_captcha));
+        .route("/r/:short_code", get(bot::redirect));
 
-    // Rate limiting: 10 запросов в секунду с burst до 50 (глобально)
     let governor_conf = Arc::new(
         GovernorConfigBuilder::default()
             .per_second(10)
@@ -38,9 +32,6 @@ pub fn create_router(state: AppState) -> Router {
 
     let api_key_routes = Router::new()
         .route("/sms/send", post(sms::send_sms))
-        .route("/sms/balance", get(sms::get_balance))
-        .route("/sms/routes", get(sms::get_routes))
-        .route("/campaigns/send", post(campaigns::send_campaign))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::require_api_key,
@@ -50,13 +41,18 @@ pub fn create_router(state: AppState) -> Router {
         });
 
     let bot_routes = Router::new()
-        .route("/admin", get(admin::list_admins).post(admin::create_admin))
-        .route("/admin/:telegram_id", get(admin::remove_admin))
-        .route("/keys", get(keys::list_keys).post(keys::create_key))
-        .route("/keys/:id/revoke", post(keys::revoke_key))
-        .route("/templates", get(templates::list).post(templates::create_or_update))
-        .route("/templates/:country_code", get(templates::remove))
-        .route("/campaigns/send", post(campaigns::send_campaign_as_bot))
+        .route("/admin", get(bot::list_admins).post(bot::create_admin))
+        .route("/admin/ensure_owner", post(bot::ensure_owner))
+        .route("/admin/me/sender_name", post(bot::update_sender_name))
+        .route("/admin/:telegram_id", delete(bot::remove_admin))
+        .route("/keys", get(bot::list_keys).post(bot::create_key))
+        .route("/keys/:id/revoke", post(bot::revoke_key))
+        .route("/templates", get(bot::list_templates).post(bot::create_template))
+        .route("/templates/:id", delete(bot::delete_template))
+        .route("/templates/:id/favorite", post(bot::set_favorite_template))
+        .route("/sms/send", post(bot::bot_send_sms))
+        .route("/campaigns/send", post(bot::send_campaign))
+        .route("/stats", get(bot::stats))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::require_internal_bot_token,

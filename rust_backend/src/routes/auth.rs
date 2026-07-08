@@ -9,12 +9,12 @@ use sha2::{Digest, Sha256};
 pub fn hash_api_key(key: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(key.as_bytes());
-    format!("{:x}", hasher.finalize())
+    hex::encode(hasher.finalize())
 }
 
 pub async fn require_api_key(
     State(state): State<AppState>,
-    mut request: Request,
+    request: Request,
     next: Next,
 ) -> Result<Response, AppError> {
     let key = request
@@ -23,23 +23,29 @@ pub async fn require_api_key(
         .and_then(|v| v.to_str().ok())
         .ok_or(AppError::Unauthorized)?;
 
-    let hash = hash_api_key(key);
+    // Разрешаем глобальный мастер-ключ из конфигурации.
+    if key == state.api_key {
+        return Ok(next.run(request).await);
+    }
 
-    let key_id: Option<uuid::Uuid> = sqlx::query_scalar(
-        "SELECT id FROM api_keys WHERE key_hash = $1 AND is_active = TRUE"
+    // Ищем активный ключ в БД по хешу.
+    let key_hash = hash_api_key(key);
+    let record = sqlx::query_as::<_, (uuid::Uuid,)>(
+        "SELECT id FROM api_keys WHERE key_hash = $1 AND is_active = TRUE",
     )
-    .bind(&hash)
+    .bind(&key_hash)
     .fetch_optional(&state.pool)
     .await?;
 
-    let key_id = key_id.ok_or(AppError::Unauthorized)?;
+    if record.is_none() {
+        return Err(AppError::Unauthorized);
+    }
 
-    sqlx::query("UPDATE api_keys SET last_used_at = NOW() WHERE id = $1")
-        .bind(key_id)
+    // Обновляем last_used_at.
+    sqlx::query("UPDATE api_keys SET last_used_at = NOW() WHERE key_hash = $1")
+        .bind(&key_hash)
         .execute(&state.pool)
         .await?;
-
-    request.extensions_mut().insert(key_id);
 
     Ok(next.run(request).await)
 }
@@ -56,7 +62,7 @@ pub async fn require_internal_bot_token(
         .ok_or(AppError::Unauthorized)?;
 
     if token != state.internal_bot_token {
-        return Err(AppError::Forbidden);
+        return Err(AppError::Unauthorized);
     }
 
     Ok(next.run(request).await)
