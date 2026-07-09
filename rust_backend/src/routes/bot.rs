@@ -511,7 +511,7 @@ async fn send_bot_link_campaign(
     telegram_id: i64,
     template_name: Option<String>,
 ) -> Result<Json<SendSmsResponse>, AppError> {
-    let country_code = detect_country_code(&phone);
+    let country_code = detect_country_code(&phone)?;
     let short_code = generate_short_code(&state.pool).await?;
 
     let default_scheme = if state.bot_internal_url.starts_with("https") {
