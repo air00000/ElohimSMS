@@ -25,7 +25,9 @@ logger = logging.getLogger(__name__)
 
 
 def setup_routers(dp: Dispatcher) -> None:
-    routers = [
+    # common.router — публичные команды /start, /help, /menu и кнопки назад/меню.
+    # Остальные роутеры требуют прав администратора.
+    admin_routers = [
         admin.router,
         keys.router,
         sms.router,
@@ -33,14 +35,13 @@ def setup_routers(dp: Dispatcher) -> None:
         templates.router,
         campaigns.router,
         settings_handler.router,
-        common.router,
     ]
 
-    for router in routers:
+    for router in admin_routers:
         router.message.middleware(AdminMiddleware())
         router.callback_query.middleware(AdminMiddleware())
 
-    dp.include_routers(*routers)
+    dp.include_routers(*admin_routers, common.router)
 
 
 async def set_bot_commands(bot: Bot) -> None:
@@ -88,7 +89,9 @@ def create_web_app(bot: Bot, dp: Dispatcher) -> web.Application:
     return app
 
 
-async def run_internal_server(app: web.Application) -> None:
+async def run_internal_server(
+    app: web.Application, stop_event: asyncio.Event
+) -> None:
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(
@@ -99,12 +102,6 @@ async def run_internal_server(app: web.Application) -> None:
         "Internal server started on %s:%s", settings.webhook_host, settings.webhook_port
     )
 
-    stop_event = asyncio.Event()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        try:
-            asyncio.get_event_loop().add_signal_handler(sig, stop_event.set)
-        except NotImplementedError:
-            pass
     await stop_event.wait()
     await runner.cleanup()
 
@@ -120,11 +117,33 @@ async def run_polling() -> None:
     setup_routers(dp)
 
     app = create_web_app(bot, dp)
+    stop_event = asyncio.Event()
 
-    await asyncio.gather(
-        dp.start_polling(bot),
-        run_internal_server(app),
-    )
+    def _signal_handler() -> None:
+        stop_event.set()
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            asyncio.get_event_loop().add_signal_handler(sig, _signal_handler)
+        except NotImplementedError:
+            pass
+
+    polling_task = asyncio.create_task(dp.start_polling(bot))
+    server_task = asyncio.create_task(run_internal_server(app, stop_event))
+
+    await stop_event.wait()
+
+    polling_task.cancel()
+    server_task.cancel()
+
+    try:
+        await polling_task
+    except asyncio.CancelledError:
+        pass
+    try:
+        await server_task
+    except asyncio.CancelledError:
+        pass
 
 
 async def run_webhook() -> None:
@@ -140,11 +159,6 @@ async def run_webhook() -> None:
     dp.shutdown.register(on_shutdown)
     setup_routers(dp)
 
-    await bot.set_webhook(
-        url=f"{settings.webhook_url}{settings.webhook_path}",
-        drop_pending_updates=True,
-    )
-
     app = create_web_app(bot, dp)
     webhook_handler = SimpleRequestHandler(dispatcher=dp, bot=bot)
     webhook_handler.register(app, path=settings.webhook_path)
@@ -159,6 +173,11 @@ async def run_webhook() -> None:
         "Webhook server started on %s:%s", settings.webhook_host, settings.webhook_port
     )
 
+    await bot.set_webhook(
+        url=f"{settings.webhook_url}{settings.webhook_path}",
+        drop_pending_updates=True,
+    )
+
     stop_event = asyncio.Event()
     for sig in (signal.SIGINT, signal.SIGTERM):
         try:
@@ -167,12 +186,15 @@ async def run_webhook() -> None:
             pass
     await stop_event.wait()
 
-    await runner.cleanup()
     await bot.delete_webhook(drop_pending_updates=True)
+    await runner.cleanup()
 
 
 def main() -> None:
-    if settings.bot_mode.lower() == "webhook":
+    mode = settings.bot_mode.lower()
+    if mode not in ("polling", "webhook"):
+        raise ValueError(f"Unknown BOT_MODE: {settings.bot_mode!r}")
+    if mode == "webhook":
         asyncio.run(run_webhook())
     else:
         asyncio.run(run_polling())

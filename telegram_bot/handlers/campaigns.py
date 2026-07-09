@@ -8,7 +8,9 @@ from handlers.common import (
     BTN_SEND_CAMPAIGN,
     cancel_menu_keyboard,
     go_to_main_menu,
+    handle_control_buttons,
     main_menu_keyboard,
+    user_is_owner,
 )
 from services.api import api
 
@@ -33,11 +35,7 @@ async def btn_send_campaign(message: types.Message, state: FSMContext):
 
 @router.message(CampaignFSM.waiting_phone)
 async def process_campaign_phone(message: types.Message, state: FSMContext):
-    if message.text == BTN_MENU:
-        await go_to_main_menu(message, state)
-        return
-    if message.text == BTN_BACK:
-        await go_to_main_menu(message, state)
+    if await handle_control_buttons(message, state):
         return
 
     phone = message.text.strip()
@@ -58,18 +56,26 @@ async def process_campaign_phone(message: types.Message, state: FSMContext):
 
 @router.message(CampaignFSM.waiting_url)
 async def process_campaign_url(message: types.Message, state: FSMContext):
-    if message.text == BTN_MENU:
-        await go_to_main_menu(message, state)
+    if not message.text:
+        await message.answer(
+            "❌ Пожалуйста, отправьте текстовое сообщение.",
+            reply_markup=cancel_menu_keyboard(),
+        )
         return
-    if message.text == BTN_BACK:
+
+    text = message.text.strip()
+    if text == BTN_BACK:
         await state.set_state(CampaignFSM.waiting_phone)
         await message.answer(
             "Введите номер телефона получателя в международном формате:",
             reply_markup=cancel_menu_keyboard(),
         )
         return
+    if text == BTN_MENU:
+        await go_to_main_menu(message, state)
+        return
 
-    url = message.text.strip()
+    url = text
     if not url.startswith(("http://", "https://")):
         await message.answer(
             "❌ Ссылка должна начинаться с http:// или https://",
@@ -78,25 +84,39 @@ async def process_campaign_url(message: types.Message, state: FSMContext):
         return
 
     data = await state.get_data()
-    phone = data["phone"]
+    phone = data.get("phone")
+    if not phone:
+        await state.clear()
+        is_owner = await user_is_owner(message.from_user.id)
+        await message.answer(
+            "❌ Данные диалога утеряны. Начните заново.",
+            reply_markup=main_menu_keyboard(is_owner=is_owner),
+        )
+        return
 
     await message.answer("⏳ Отправка кампании...")
 
     try:
         result = await api.send_campaign(phone, url, message.from_user.id)
     except Exception as e:
-        await message.answer(f"❌ Ошибка отправки кампании: {e}")
-        return
-    finally:
         await state.clear()
+        is_owner = await user_is_owner(message.from_user.id)
+        await message.answer(
+            f"❌ Ошибка отправки кампании: {e}",
+            reply_markup=main_menu_keyboard(is_owner=is_owner),
+        )
+        return
+
+    await state.clear()
 
     status = "✅" if result.get("success") else "❌"
+    is_owner = await user_is_owner(message.from_user.id)
     await message.answer(
         f"{status} <b>Кампания отправлена</b>\n\n"
         f"<b>ID:</b> <code>{result.get('campaign_id')}</code>\n"
         f"<b>Короткая ссылка:</b> {result.get('short_link')}\n"
         f"<b>Сообщение:</b> <code>{result.get('message')}</code>\n\n"
         f"<b>Ответ шлюза:</b> <code>{result.get('provider_response')}</code>",
-        reply_markup=main_menu_keyboard(),
+        reply_markup=main_menu_keyboard(is_owner=is_owner),
         parse_mode="HTML",
     )

@@ -3,12 +3,12 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
 from handlers.common import (
-    BTN_BACK,
-    BTN_MENU,
     BTN_SETTINGS,
     cancel_menu_keyboard,
     go_to_main_menu,
+    handle_control_buttons,
     main_menu_keyboard,
+    user_is_owner,
 )
 from services.api import api
 
@@ -62,8 +62,7 @@ async def cb_settings_sender(query: types.CallbackQuery, state: FSMContext):
 
 @router.message(SettingsFSM.waiting_sender_name)
 async def process_sender_name(message: types.Message, state: FSMContext):
-    if message.text in (BTN_BACK, BTN_MENU):
-        await go_to_main_menu(message, state)
+    if await handle_control_buttons(message, state):
         return
 
     raw = message.text.strip()
@@ -72,13 +71,18 @@ async def process_sender_name(message: types.Message, state: FSMContext):
     try:
         await api.update_sender_name(message.from_user.id, sender_name)
     except Exception as e:
-        await message.answer(f"❌ Ошибка: {e}")
-        return
-    finally:
         await state.clear()
+        is_owner = await user_is_owner(message.from_user.id)
+        await message.answer(
+            f"❌ Ошибка: {e}",
+            reply_markup=main_menu_keyboard(is_owner=is_owner),
+        )
+        return
 
+    await state.clear()
+    is_owner = await user_is_owner(message.from_user.id)
     await message.answer(
         f"✅ Имя отправителя обновлено: <code>{sender_name or 'по умолчанию'}</code>",
-        reply_markup=main_menu_keyboard(),
+        reply_markup=main_menu_keyboard(is_owner=is_owner),
         parse_mode="HTML",
     )

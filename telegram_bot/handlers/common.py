@@ -64,6 +64,24 @@ async def go_to_main_menu(message: types.Message, state: FSMContext) -> None:
     )
 
 
+async def handle_control_buttons(message: types.Message, state: FSMContext) -> bool:
+    """Обрабатывает кнопки Назад/Меню и не-текстовые сообщения.
+
+    Возвращает True, если дальнейшая обработка не нужна.
+    """
+    if not message.text:
+        await message.answer(
+            "❌ Пожалуйста, отправьте текстовое сообщение.",
+            reply_markup=cancel_menu_keyboard(),
+        )
+        return True
+    text = message.text.strip()
+    if text in (BTN_BACK, BTN_MENU):
+        await go_to_main_menu(message, state)
+        return True
+    return False
+
+
 @router.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
     await state.clear()
@@ -76,13 +94,13 @@ async def cmd_start(message: types.Message, state: FSMContext):
     )
 
 
-@router.message(lambda m: m.text == BTN_MENU)
+@router.message(lambda m: m.text and m.text.strip() == BTN_MENU)
 @router.message(Command("menu"))
 async def btn_menu(message: types.Message, state: FSMContext):
     await go_to_main_menu(message, state)
 
 
-@router.message(lambda m: m.text == BTN_BACK)
+@router.message(lambda m: m.text and m.text.strip() == BTN_BACK)
 async def btn_back(message: types.Message, state: FSMContext):
     # По умолчанию Назад = отмена и выход в главное меню.
     # Конкретные FSM-обработчики могут перехватывать BTN_BACK раньше.
@@ -90,7 +108,7 @@ async def btn_back(message: types.Message, state: FSMContext):
 
 
 @router.message(Command("help"))
-@router.message(lambda m: m.text == BTN_HELP)
+@router.message(lambda m: m.text and m.text.strip() == BTN_HELP)
 async def cmd_help(message: types.Message):
     await message.answer(
         "📋 <b>Как пользоваться ботом</b>:\n\n"

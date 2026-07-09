@@ -26,13 +26,17 @@ class AdminMiddleware(BaseMiddleware):
         try:
             admins = await api.list_admins()
         except Exception as e:
-            if isinstance(event, Message):
+            if isinstance(event, CallbackQuery):
+                await event.answer(f"❌ Ошибка проверки прав: {e}", show_alert=True)
+            elif isinstance(event, Message):
                 await event.answer(f"❌ Ошибка проверки прав: {e}")
             return None
 
         admin_ids = {admin["telegram_id"] for admin in admins}
         if user.id not in admin_ids:
-            if isinstance(event, Message):
+            if isinstance(event, CallbackQuery):
+                await event.answer("⛔ У вас нет прав администратора.", show_alert=True)
+            elif isinstance(event, Message):
                 await event.answer("⛔ У вас нет прав администратора.")
             return None
 

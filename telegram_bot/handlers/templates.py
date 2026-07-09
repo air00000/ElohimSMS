@@ -7,12 +7,12 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from handlers.common import (
-    BTN_BACK,
-    BTN_MENU,
     BTN_TEMPLATES,
     cancel_menu_keyboard,
     go_to_main_menu,
+    handle_control_buttons,
     main_menu_keyboard,
+    user_is_owner,
 )
 from services.api import api
 
@@ -87,17 +87,18 @@ async def cb_templates_country(query: types.CallbackQuery):
     lines = [f"📝 <b>Шаблоны для {country}:</b>"]
     for t in country_templates:
         star = " ⭐" if t.get("is_favorite") else ""
-        lines.append(f"{star}<b>{t['name']}</b>\n<code>{t['text']}</code>")
+        name = t["name"] or "Без названия"
+        lines.append(f"{star}<b>{name}</b>\n<code>{t['text']}</code>")
 
     builder = InlineKeyboardBuilder()
     for t in country_templates:
         if not t.get("is_favorite"):
             builder.button(
-                text=f"⭐ {t['name']}",
+                text=f"⭐ {t['name'] or 'Без названия'}",
                 callback_data=f"templ:fav:{t['id']}",
             )
         builder.button(
-            text=f"🗑 {t['name']}",
+            text=f"🗑 {t['name'] or 'Без названия'}",
             callback_data=f"templ:del:{t['id']}",
         )
     builder.button(text="➕ Добавить", callback_data="templ:add")
@@ -124,8 +125,7 @@ async def cb_template_add(query: types.CallbackQuery, state: FSMContext):
 
 @router.message(AddTemplateFSM.waiting_country)
 async def process_template_country(message: types.Message, state: FSMContext):
-    if message.text in (BTN_BACK, BTN_MENU):
-        await go_to_main_menu(message, state)
+    if await handle_control_buttons(message, state):
         return
 
     country = message.text.strip().upper()
@@ -146,8 +146,7 @@ async def process_template_country(message: types.Message, state: FSMContext):
 
 @router.message(AddTemplateFSM.waiting_name)
 async def process_template_name(message: types.Message, state: FSMContext):
-    if message.text in (BTN_BACK, BTN_MENU):
-        await go_to_main_menu(message, state)
+    if await handle_control_buttons(message, state):
         return
 
     name = message.text.strip()
@@ -173,8 +172,7 @@ async def process_template_name(message: types.Message, state: FSMContext):
 
 @router.message(AddTemplateFSM.waiting_text)
 async def process_template_text(message: types.Message, state: FSMContext):
-    if message.text in (BTN_BACK, BTN_MENU):
-        await go_to_main_menu(message, state)
+    if await handle_control_buttons(message, state):
         return
 
     text = message.text.strip()
@@ -186,22 +184,35 @@ async def process_template_text(message: types.Message, state: FSMContext):
         return
 
     data = await state.get_data()
-    country = data["country"]
-    name = data["name"]
+    country = data.get("country")
+    name = data.get("name")
+    if not country or not name:
+        await state.clear()
+        is_owner = await user_is_owner(message.from_user.id)
+        await message.answer(
+            "❌ Данные диалога утеряны. Начните заново.",
+            reply_markup=main_menu_keyboard(is_owner=is_owner),
+        )
+        return
 
     try:
         template = await api.create_template(country, text, name)
     except Exception as e:
-        await message.answer(f"❌ Ошибка сохранения шаблона: {e}")
-        return
-    finally:
         await state.clear()
+        is_owner = await user_is_owner(message.from_user.id)
+        await message.answer(
+            f"❌ Ошибка сохранения шаблона: {e}",
+            reply_markup=main_menu_keyboard(is_owner=is_owner),
+        )
+        return
 
+    await state.clear()
+    is_owner = await user_is_owner(message.from_user.id)
     await message.answer(
         f"✅ Шаблон <b>{template['name']}</b> для <b>{template['country_code']}</b> сохранён.\n\n"
         f"<code>{template['text']}</code>\n\n"
         "Если это первый шаблон для страны, он автоматически стал избранным.",
-        reply_markup=main_menu_keyboard(),
+        reply_markup=main_menu_keyboard(is_owner=is_owner),
         parse_mode="HTML",
     )
 

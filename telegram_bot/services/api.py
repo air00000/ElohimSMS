@@ -2,7 +2,7 @@ import asyncio
 from typing import Any
 
 import aiohttp
-from aiohttp import ClientError, ClientResponseError
+from aiohttp import ClientConnectorError, ClientResponseError
 
 from config import settings
 
@@ -14,6 +14,7 @@ class BackendAPI:
             "X-Internal-Bot-Token": settings.internal_bot_token,
             "Content-Type": "application/json",
         }
+        self.timeout = aiohttp.ClientTimeout(total=30)
 
     async def request(
         self,
@@ -29,25 +30,30 @@ class BackendAPI:
 
         for attempt in range(retries):
             try:
-                async with aiohttp.ClientSession() as session:
+                async with aiohttp.ClientSession(timeout=self.timeout) as session:
                     async with session.request(
                         method, url, headers=self.headers, json=json, params=params
                     ) as response:
+                        if response.status == 204:
+                            return {}
+
                         data = await response.json()
                         if not response.ok:
-                            error_msg = (
-                                data.get("error", data)
-                                if isinstance(data, dict)
-                                else data
-                            )
+                            if isinstance(data, dict):
+                                error_msg = data.get("error", data)
+                            else:
+                                error_msg = data
                             raise ClientResponseError(
                                 response.request_info,
                                 response.history,
                                 status=response.status,
                                 message=str(error_msg),
                             )
-                        return data
-            except (ClientError, TimeoutError) as e:
+                        return data or {}
+            except ClientResponseError:
+                # HTTP-ошибки (4xx/5xx) не ретраим.
+                raise
+            except (ClientConnectorError, TimeoutError, asyncio.TimeoutError) as e:
                 last_error = e
                 if attempt < retries - 1:
                     wait = backoff * (2**attempt)

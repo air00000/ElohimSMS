@@ -5,12 +5,12 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from handlers.common import (
-    BTN_BACK,
     BTN_KEYS,
-    BTN_MENU,
     cancel_menu_keyboard,
     go_to_main_menu,
+    handle_control_buttons,
     main_menu_keyboard,
+    user_is_owner,
 )
 from services.api import api
 
@@ -79,8 +79,7 @@ async def cb_key_create(query: types.CallbackQuery, state: FSMContext):
 
 @router.message(CreateKeyFSM.waiting_name)
 async def process_key_name(message: types.Message, state: FSMContext):
-    if message.text in (BTN_BACK, BTN_MENU):
-        await go_to_main_menu(message, state)
+    if await handle_control_buttons(message, state):
         return
 
     name = message.text.strip()
@@ -94,18 +93,23 @@ async def process_key_name(message: types.Message, state: FSMContext):
     try:
         key = await api.create_key(name, message.from_user.id)
     except Exception as e:
-        await message.answer(f"❌ Ошибка: {e}")
-        return
-    finally:
         await state.clear()
+        is_owner = await user_is_owner(message.from_user.id)
+        await message.answer(
+            f"❌ Ошибка: {e}",
+            reply_markup=main_menu_keyboard(is_owner=is_owner),
+        )
+        return
 
+    await state.clear()
+    is_owner = await user_is_owner(message.from_user.id)
     await message.answer(
         "✅ API-ключ создан.\n\n"
         f"<b>Название:</b> {key['name']}\n"
         f"<b>ID:</b> <code>{key['id']}</code>\n"
         f"<b>Ключ:</b> <code>{key['key']}</code>\n\n"
         "⚠️ Сохраните ключ сейчас, он больше не будет показан.",
-        reply_markup=main_menu_keyboard(),
+        reply_markup=main_menu_keyboard(is_owner=is_owner),
         parse_mode="HTML",
     )
 

@@ -6,11 +6,11 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from handlers.common import (
     BTN_ADMINS,
-    BTN_BACK,
-    BTN_MENU,
     cancel_menu_keyboard,
     go_to_main_menu,
+    handle_control_buttons,
     main_menu_keyboard,
+    user_is_owner,
 )
 from services.api import api
 
@@ -21,20 +21,9 @@ class AddAdminFSM(StatesGroup):
     waiting_id = State()
 
 
-async def is_owner(user_id: int) -> bool:
-    try:
-        admins = await api.list_admins()
-    except Exception:
-        return False
-    for admin in admins:
-        if admin.get("telegram_id") == user_id and admin.get("is_owner"):
-            return True
-    return False
-
-
 @router.message(lambda m: m.text == BTN_ADMINS)
 async def btn_admins(message: types.Message):
-    if not await is_owner(message.from_user.id):
+    if not await user_is_owner(message.from_user.id):
         await message.answer("⛔ Только владелец может управлять администраторами.")
         return
 
@@ -82,6 +71,10 @@ async def btn_admins(message: types.Message):
 
 @router.callback_query(F.data == "admin:add")
 async def cb_admin_add(query: types.CallbackQuery, state: FSMContext):
+    if not await user_is_owner(query.from_user.id):
+        await query.answer("⛔ Только владелец может добавлять администраторов.", show_alert=True)
+        return
+
     await state.set_state(AddAdminFSM.waiting_id)
     await query.message.answer(
         "Введите <b>telegram_id</b> нового администратора.\n"
@@ -95,8 +88,12 @@ async def cb_admin_add(query: types.CallbackQuery, state: FSMContext):
 
 @router.message(AddAdminFSM.waiting_id)
 async def process_admin_id(message: types.Message, state: FSMContext):
-    if message.text in (BTN_BACK, BTN_MENU):
-        await go_to_main_menu(message, state)
+    if not await user_is_owner(message.from_user.id):
+        await state.clear()
+        await message.answer("⛔ Только владелец может добавлять администраторов.")
+        return
+
+    if await handle_control_buttons(message, state):
         return
 
     parts = message.text.strip().split(maxsplit=1)
@@ -121,11 +118,14 @@ async def process_admin_id(message: types.Message, state: FSMContext):
     try:
         admin = await api.create_admin(telegram_id, username)
     except Exception as e:
-        await message.answer(f"❌ Ошибка: {e}")
-        return
-    finally:
         await state.clear()
+        await message.answer(
+            f"❌ Ошибка: {e}",
+            reply_markup=main_menu_keyboard(is_owner=True),
+        )
+        return
 
+    await state.clear()
     await message.answer(
         f"✅ Администратор <code>{admin['telegram_id']}</code> добавлен.",
         reply_markup=main_menu_keyboard(is_owner=True),
@@ -135,6 +135,10 @@ async def process_admin_id(message: types.Message, state: FSMContext):
 
 @router.callback_query(F.data.startswith("admin:remove:"))
 async def cb_admin_remove(query: types.CallbackQuery):
+    if not await user_is_owner(query.from_user.id):
+        await query.answer("⛔ Только владелец может удалять администраторов.", show_alert=True)
+        return
+
     telegram_id = int(query.data.split(":")[-1])
 
     try:
