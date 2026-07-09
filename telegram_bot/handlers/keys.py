@@ -4,7 +4,14 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from handlers.common import BTN_KEYS, main_menu_keyboard
+from handlers.common import (
+    BTN_BACK,
+    BTN_KEYS,
+    BTN_MENU,
+    cancel_menu_keyboard,
+    go_to_main_menu,
+    main_menu_keyboard,
+)
 from services.api import api
 
 router = Router()
@@ -63,15 +70,25 @@ async def btn_keys(message: types.Message):
 @router.callback_query(F.data == "key:create")
 async def cb_key_create(query: types.CallbackQuery, state: FSMContext):
     await state.set_state(CreateKeyFSM.waiting_name)
-    await query.message.answer("Введите название для нового API-ключа:")
+    await query.message.answer(
+        "Введите название для нового API-ключа:",
+        reply_markup=cancel_menu_keyboard(),
+    )
     await query.answer()
 
 
 @router.message(CreateKeyFSM.waiting_name)
 async def process_key_name(message: types.Message, state: FSMContext):
+    if message.text in (BTN_BACK, BTN_MENU):
+        await go_to_main_menu(message, state)
+        return
+
     name = message.text.strip()
     if not name:
-        await message.answer("❌ Название не может быть пустым.")
+        await message.answer(
+            "❌ Название не может быть пустым.",
+            reply_markup=cancel_menu_keyboard(),
+        )
         return
 
     try:

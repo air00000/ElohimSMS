@@ -354,7 +354,10 @@ pub async fn create_template(
         return Err(AppError::BadRequest("Template text is required".to_string()));
     }
 
-    let name = payload.name.as_deref().map(|n| n.trim().to_string());
+    let name = payload.name.trim();
+    if name.is_empty() {
+        return Err(AppError::BadRequest("Template name is required".to_string()));
+    }
 
     let has_favorite = sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS(SELECT 1 FROM templates WHERE country_code = $1 AND is_favorite = TRUE)"
@@ -369,7 +372,7 @@ pub async fn create_template(
          RETURNING *",
     )
     .bind(&country_code)
-    .bind(name)
+    .bind(name.to_string())
     .bind(text)
     .bind(!has_favorite)
     .fetch_one(&state.pool)
@@ -443,12 +446,22 @@ pub async fn set_favorite_template(
 #[instrument(skip(state, payload), fields(phone = %payload.phone))]
 pub async fn bot_send_sms(
     State(state): State<AppState>,
+    headers: HeaderMap,
+    Host(host): Host,
     Json(payload): Json<BotSendSmsRequest>,
 ) -> Result<Json<SendSmsResponse>, AppError> {
     let phone = normalize_phone(&payload.phone)?;
     let message = payload.message.trim();
     if message.is_empty() {
         return Err(AppError::BadRequest("Message is required".to_string()));
+    }
+
+    // Если указан URL и сообщение содержит {link} — отправляем как кампанию с короткой ссылкой.
+    if let Some(target_url) = payload.url {
+        let target_url = target_url.trim();
+        if !target_url.is_empty() && message.contains("{link}") {
+            return send_bot_link_campaign(&state, headers, host, phone, message, target_url, payload.telegram_id, payload.template_name).await;
+        }
     }
 
     let sender_name = get_admin_sender_name(&state.pool, payload.telegram_id).await?;
@@ -485,6 +498,73 @@ pub async fn bot_send_sms(
         provider_response: Some(result.provider_response),
         campaign_id: None,
         short_link: None,
+    }))
+}
+
+async fn send_bot_link_campaign(
+    state: &AppState,
+    headers: HeaderMap,
+    host: String,
+    phone: String,
+    message: &str,
+    target_url: &str,
+    telegram_id: i64,
+    template_name: Option<String>,
+) -> Result<Json<SendSmsResponse>, AppError> {
+    let country_code = detect_country_code(&phone);
+    let short_code = generate_short_code(&state.pool).await?;
+
+    let default_scheme = if state.bot_internal_url.starts_with("https") {
+        "https"
+    } else {
+        "http"
+    };
+    let scheme = request_scheme(&headers, default_scheme);
+    let short_link = format!("{}://{}/r/{}", scheme, host, short_code);
+
+    let rendered = message.replace("{link}", &short_link);
+    let sender_name = get_admin_sender_name(&state.pool, telegram_id).await?;
+
+    info!(phone = %phone, short_code = %short_code, "Sending bot link campaign");
+
+    let result = state
+        .sms_client
+        .send_sms(&phone, &rendered, sender_name.as_deref())
+        .await
+        .map_err(|e| AppError::Internal(format!("SMS gateway error: {e}")))?;
+
+    let status = if result.success { "sent" } else { "failed" };
+    let sent_at = if result.success { Some(chrono::Utc::now()) } else { None };
+
+    let campaign = sqlx::query_as::<_, Campaign>(
+        "INSERT INTO campaigns
+         (short_code, target_url, phone, country_code, message, template_name, status, sent_by_telegram_id, provider_response, sent_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         RETURNING *"
+    )
+    .bind(&short_code)
+    .bind(target_url)
+    .bind(&phone)
+    .bind(&country_code)
+    .bind(&rendered)
+    .bind(template_name.as_deref())
+    .bind(status)
+    .bind(telegram_id)
+    .bind(&result.provider_response)
+    .bind(sent_at)
+    .fetch_one(&state.pool)
+    .await?;
+
+    Ok(Json(SendSmsResponse {
+        success: result.success,
+        message: if result.success {
+            "Campaign with short link accepted by gateway".to_string()
+        } else {
+            "SMS gateway rejected the message".to_string()
+        },
+        provider_response: Some(result.provider_response),
+        campaign_id: Some(campaign.id),
+        short_link: Some(short_link),
     }))
 }
 
@@ -542,10 +622,12 @@ pub async fn send_campaign(
     let status = if result.success { "sent" } else { "failed" };
     let sent_at = if result.success { Some(chrono::Utc::now()) } else { None };
 
+    let template_name = template.name.clone();
+
     let campaign = sqlx::query_as::<_, Campaign>(
         "INSERT INTO campaigns
-         (short_code, target_url, phone, country_code, message, status, sent_by_telegram_id, provider_response, sent_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         (short_code, target_url, phone, country_code, message, template_name, status, sent_by_telegram_id, provider_response, sent_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
          RETURNING *"
     )
     .bind(&short_code)
@@ -553,6 +635,7 @@ pub async fn send_campaign(
     .bind(&phone)
     .bind(&country_code)
     .bind(&message)
+    .bind(template_name.as_deref())
     .bind(status)
     .bind(payload.telegram_id)
     .bind(&result.provider_response)
@@ -577,8 +660,19 @@ struct CampaignNotifyInfo {
     target_url: String,
     phone: String,
     country_code: String,
+    message: String,
+    template_name: Option<String>,
     sent_by_telegram_id: Option<i64>,
     api_key_id: Option<Uuid>,
+}
+
+async fn get_owner_telegram_id(pool: &sqlx::PgPool) -> Result<Option<i64>, AppError> {
+    let owner = sqlx::query_scalar::<_, Option<i64>>(
+        "SELECT telegram_id FROM admins WHERE is_owner = TRUE LIMIT 1"
+    )
+    .fetch_optional(pool)
+    .await?;
+    Ok(owner.flatten())
 }
 
 pub async fn redirect(
@@ -586,7 +680,7 @@ pub async fn redirect(
     Path(short_code): Path<String>,
 ) -> Result<axum::response::Redirect, AppError> {
     let campaign = sqlx::query_as::<_, CampaignNotifyInfo>(
-        "SELECT id, target_url, phone, country_code, sent_by_telegram_id, api_key_id
+        "SELECT id, target_url, phone, country_code, message, template_name, sent_by_telegram_id, api_key_id
          FROM campaigns WHERE short_code = $1"
     )
     .bind(&short_code)
@@ -594,7 +688,7 @@ pub async fn redirect(
     .await?
     .ok_or(AppError::NotFound)?;
 
-    let admin_telegram_id = if let Some(tid) = campaign.sent_by_telegram_id {
+    let mut admin_telegram_id = if let Some(tid) = campaign.sent_by_telegram_id {
         Some(tid)
     } else if let Some(key_id) = campaign.api_key_id {
         sqlx::query_scalar::<_, Option<i64>>(
@@ -607,6 +701,11 @@ pub async fn redirect(
     } else {
         None
     };
+
+    // Если отправителя не нашли — пытаемся уведомить владельца сервиса.
+    if admin_telegram_id.is_none() {
+        admin_telegram_id = get_owner_telegram_id(&state.pool).await?;
+    }
 
     sqlx::query(
         "UPDATE campaigns SET click_count = click_count + 1 WHERE id = $1"
@@ -623,11 +722,19 @@ pub async fn redirect(
     .await?;
 
     if let Some(tid) = admin_telegram_id {
+        let template_line = if let Some(name) = &campaign.template_name {
+            format!("\n<b>Шаблон:</b> {}", name)
+        } else {
+            String::new()
+        };
+
         let text = format!(
-            "🔗 <b>Переход по ссылке</b>\n\n<b>Кампания:</b> <code>{}</code>\n<b>Номер:</b> <code>{}</code>\n<b>Страна:</b> {}\n<b>Время:</b> {}",
+            "🔗 <b>Переход по ссылке</b>\n\n<b>Кампания:</b> <code>{}</code>\n<b>Номер:</b> <code>{}</code>\n<b>Страна:</b> {}\n<b>Сообщение:</b> <code>{}</code>{}\n<b>Время:</b> {}",
             campaign.id,
             campaign.phone,
             campaign.country_code,
+            campaign.message,
+            template_line,
             chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
         );
         notify_admin(&state, tid, text);

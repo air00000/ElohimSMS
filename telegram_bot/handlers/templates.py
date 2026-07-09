@@ -6,7 +6,14 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from handlers.common import BTN_TEMPLATES, main_menu_keyboard
+from handlers.common import (
+    BTN_BACK,
+    BTN_MENU,
+    BTN_TEMPLATES,
+    cancel_menu_keyboard,
+    go_to_main_menu,
+    main_menu_keyboard,
+)
 from services.api import api
 
 router = Router()
@@ -14,6 +21,7 @@ router = Router()
 
 class AddTemplateFSM(StatesGroup):
     waiting_country = State()
+    waiting_name = State()
     waiting_text = State()
 
 
@@ -79,18 +87,17 @@ async def cb_templates_country(query: types.CallbackQuery):
     lines = [f"📝 <b>Шаблоны для {country}:</b>"]
     for t in country_templates:
         star = " ⭐" if t.get("is_favorite") else ""
-        name = f" <i>{t.get('name')}</i>" if t.get("name") else ""
-        lines.append(f"{star}{name}\n<code>{t['text']}</code>")
+        lines.append(f"{star}<b>{t['name']}</b>\n<code>{t['text']}</code>")
 
     builder = InlineKeyboardBuilder()
     for t in country_templates:
         if not t.get("is_favorite"):
             builder.button(
-                text=f"⭐ {t['id'][:8]}",
+                text=f"⭐ {t['name']}",
                 callback_data=f"templ:fav:{t['id']}",
             )
         builder.button(
-            text=f"🗑 {t['id'][:8]}",
+            text=f"🗑 {t['name']}",
             callback_data=f"templ:del:{t['id']}",
         )
     builder.button(text="➕ Добавить", callback_data="templ:add")
@@ -109,6 +116,7 @@ async def cb_template_add(query: types.CallbackQuery, state: FSMContext):
     await state.set_state(AddTemplateFSM.waiting_country)
     await query.message.answer(
         "Введите двухбуквенный код страны, например <code>US</code>, <code>GB</code>, <code>DE</code>:",
+        reply_markup=cancel_menu_keyboard(),
         parse_mode="HTML",
     )
     await query.answer()
@@ -116,12 +124,41 @@ async def cb_template_add(query: types.CallbackQuery, state: FSMContext):
 
 @router.message(AddTemplateFSM.waiting_country)
 async def process_template_country(message: types.Message, state: FSMContext):
+    if message.text in (BTN_BACK, BTN_MENU):
+        await go_to_main_menu(message, state)
+        return
+
     country = message.text.strip().upper()
     if len(country) != 2 or not country.isalpha():
-        await message.answer("❌ Код страны должен состоять из 2 букв.")
+        await message.answer(
+            "❌ Код страны должен состоять из 2 букв.",
+            reply_markup=cancel_menu_keyboard(),
+        )
         return
 
     await state.update_data(country=country)
+    await state.set_state(AddTemplateFSM.waiting_name)
+    await message.answer(
+        "Введите название шаблона (будет отображаться в списке):",
+        reply_markup=cancel_menu_keyboard(),
+    )
+
+
+@router.message(AddTemplateFSM.waiting_name)
+async def process_template_name(message: types.Message, state: FSMContext):
+    if message.text in (BTN_BACK, BTN_MENU):
+        await go_to_main_menu(message, state)
+        return
+
+    name = message.text.strip()
+    if not name:
+        await message.answer(
+            "❌ Название шаблона не может быть пустым.",
+            reply_markup=cancel_menu_keyboard(),
+        )
+        return
+
+    await state.update_data(name=name)
     await state.set_state(AddTemplateFSM.waiting_text)
     await message.answer(
         "Введите текст шаблона.\n\n"
@@ -129,22 +166,31 @@ async def process_template_country(message: types.Message, state: FSMContext):
         "<code>{link}</code> — короткая ссылка\n"
         "<code>{phone}</code> — номер получателя\n"
         "<code>{country}</code> — код страны",
+        reply_markup=cancel_menu_keyboard(),
         parse_mode="HTML",
     )
 
 
 @router.message(AddTemplateFSM.waiting_text)
 async def process_template_text(message: types.Message, state: FSMContext):
+    if message.text in (BTN_BACK, BTN_MENU):
+        await go_to_main_menu(message, state)
+        return
+
     text = message.text.strip()
     if not text:
-        await message.answer("❌ Текст шаблона не может быть пустым.")
+        await message.answer(
+            "❌ Текст шаблона не может быть пустым.",
+            reply_markup=cancel_menu_keyboard(),
+        )
         return
 
     data = await state.get_data()
     country = data["country"]
+    name = data["name"]
 
     try:
-        template = await api.create_template(country, text)
+        template = await api.create_template(country, text, name)
     except Exception as e:
         await message.answer(f"❌ Ошибка сохранения шаблона: {e}")
         return
@@ -152,7 +198,7 @@ async def process_template_text(message: types.Message, state: FSMContext):
         await state.clear()
 
     await message.answer(
-        f"✅ Шаблон для <b>{template['country_code']}</b> сохранён.\n\n"
+        f"✅ Шаблон <b>{template['name']}</b> для <b>{template['country_code']}</b> сохранён.\n\n"
         f"<code>{template['text']}</code>\n\n"
         "Если это первый шаблон для страны, он автоматически стал избранным.",
         reply_markup=main_menu_keyboard(),
@@ -171,7 +217,7 @@ async def cb_template_favorite(query: types.CallbackQuery):
 
     await query.answer("Сделано избранным")
     await query.message.answer(
-        f"⭐ Шаблон для <b>{template['country_code']}</b> теперь избранный.",
+        f"⭐ Шаблон <b>{template['name']}</b> для <b>{template['country_code']}</b> теперь избранный.",
         parse_mode="HTML",
     )
 

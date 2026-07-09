@@ -2,7 +2,14 @@ from aiogram import Router, types
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
-from handlers.common import BTN_SETTINGS, main_menu_keyboard
+from handlers.common import (
+    BTN_BACK,
+    BTN_MENU,
+    BTN_SETTINGS,
+    cancel_menu_keyboard,
+    go_to_main_menu,
+    main_menu_keyboard,
+)
 from services.api import api
 
 router = Router()
@@ -47,6 +54,7 @@ async def cb_settings_sender(query: types.CallbackQuery, state: FSMContext):
     await query.message.answer(
         "Введите новое имя отправителя (sender ID).\n"
         "Или отправьте <code>-</code>, чтобы сбросить значение по умолчанию.",
+        reply_markup=cancel_menu_keyboard(),
         parse_mode="HTML",
     )
     await query.answer()
@@ -54,6 +62,10 @@ async def cb_settings_sender(query: types.CallbackQuery, state: FSMContext):
 
 @router.message(SettingsFSM.waiting_sender_name)
 async def process_sender_name(message: types.Message, state: FSMContext):
+    if message.text in (BTN_BACK, BTN_MENU):
+        await go_to_main_menu(message, state)
+        return
+
     raw = message.text.strip()
     sender_name = None if raw == "-" else raw
 

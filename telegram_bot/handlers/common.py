@@ -1,6 +1,7 @@
 from aiogram import Router, types
 from aiogram.filters import Command
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+from aiogram.fsm.context import FSMContext
 
 from services.api import api
 
@@ -24,7 +25,8 @@ BTN_SEND_SMS = "📤 Отправить SMS"
 BTN_SEND_CAMPAIGN = "📨 Отправить кампанию"
 BTN_SETTINGS = "⚙️ Настройки"
 BTN_HELP = "❓ Помощь"
-BTN_MENU = "🏠 Главное меню"
+BTN_MENU = "🏠 Меню"
+BTN_BACK = "◀️ Назад"
 
 
 def main_menu_keyboard(is_owner: bool = False) -> ReplyKeyboardMarkup:
@@ -43,8 +45,28 @@ def main_menu_keyboard(is_owner: bool = False) -> ReplyKeyboardMarkup:
     )
 
 
+def cancel_menu_keyboard() -> ReplyKeyboardMarkup:
+    """Клавиатура с кнопками Назад и Меню для выхода из любого диалога."""
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=BTN_BACK), KeyboardButton(text=BTN_MENU)],
+        ],
+        resize_keyboard=True,
+    )
+
+
+async def go_to_main_menu(message: types.Message, state: FSMContext) -> None:
+    await state.clear()
+    is_owner = await user_is_owner(message.from_user.id)
+    await message.answer(
+        "Главное меню",
+        reply_markup=main_menu_keyboard(is_owner=is_owner),
+    )
+
+
 @router.message(Command("start"))
-async def cmd_start(message: types.Message):
+async def cmd_start(message: types.Message, state: FSMContext):
+    await state.clear()
     is_owner = await user_is_owner(message.from_user.id)
     await message.answer(
         "👋 Добро пожаловать в <b>ElohimSMS Bot</b>.\n\n"
@@ -55,11 +77,16 @@ async def cmd_start(message: types.Message):
 
 
 @router.message(lambda m: m.text == BTN_MENU)
-async def btn_menu(message: types.Message):
-    await message.answer(
-        "Главное меню",
-        reply_markup=main_menu_keyboard(),
-    )
+@router.message(Command("menu"))
+async def btn_menu(message: types.Message, state: FSMContext):
+    await go_to_main_menu(message, state)
+
+
+@router.message(lambda m: m.text == BTN_BACK)
+async def btn_back(message: types.Message, state: FSMContext):
+    # По умолчанию Назад = отмена и выход в главное меню.
+    # Конкретные FSM-обработчики могут перехватывать BTN_BACK раньше.
+    await go_to_main_menu(message, state)
 
 
 @router.message(Command("help"))
@@ -69,10 +96,12 @@ async def cmd_help(message: types.Message):
         "📋 <b>Как пользоваться ботом</b>:\n\n"
         "• <b>Администраторы</b> — управление доступом (только владелец).\n"
         "• <b>API-ключи</b> — создание и отзыв ключей для API.\n"
-        "• <b>Шаблоны</b> — храните несколько шаблонов на страну и выбирайте избранный.\n"
-        "• <b>Отправить SMS</b> — ручная отправка сообщения.\n"
+        "• <b>Шаблоны</b> — храните именованные шаблоны на страну и выбирайте избранный.\n"
+        "• <b>Отправить SMS</b> — ручная отправка сообщения или по шаблону.\n"
+        "  Используйте <code>{link}</code> в тексте — он заменится на короткую ссылку.\n"
         "• <b>Отправить кампанию</b> — отправка по избранному шаблону с короткой ссылкой.\n"
         "• <b>Настройки</b> — имя отправителя (sender ID).\n\n"
-        "Placeholders в шаблонах: <code>{link}</code>, <code>{phone}</code>, <code>{country}</code>",
+        "Placeholders: <code>{link}</code>, <code>{phone}</code>, <code>{country}</code>\n\n"
+        "Кнопки <b>◀️ Назад</b> и <b>🏠 Меню</b> работают в любом диалоге.",
         parse_mode="HTML",
     )

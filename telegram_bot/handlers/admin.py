@@ -4,7 +4,14 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from handlers.common import BTN_ADMINS, main_menu_keyboard
+from handlers.common import (
+    BTN_ADMINS,
+    BTN_BACK,
+    BTN_MENU,
+    cancel_menu_keyboard,
+    go_to_main_menu,
+    main_menu_keyboard,
+)
 from services.api import api
 
 router = Router()
@@ -80,6 +87,7 @@ async def cb_admin_add(query: types.CallbackQuery, state: FSMContext):
         "Введите <b>telegram_id</b> нового администратора.\n"
         "Можно сразу через пробел указать username (без @).\n\n"
         "Пример: <code>123456789 ivanov</code>",
+        reply_markup=cancel_menu_keyboard(),
         parse_mode="HTML",
     )
     await query.answer()
@@ -87,15 +95,25 @@ async def cb_admin_add(query: types.CallbackQuery, state: FSMContext):
 
 @router.message(AddAdminFSM.waiting_id)
 async def process_admin_id(message: types.Message, state: FSMContext):
+    if message.text in (BTN_BACK, BTN_MENU):
+        await go_to_main_menu(message, state)
+        return
+
     parts = message.text.strip().split(maxsplit=1)
     if not parts:
-        await message.answer("❌ Введите telegram_id.")
+        await message.answer(
+            "❌ Введите telegram_id.",
+            reply_markup=cancel_menu_keyboard(),
+        )
         return
 
     try:
         telegram_id = int(parts[0])
     except ValueError:
-        await message.answer("❌ telegram_id должен быть числом.")
+        await message.answer(
+            "❌ telegram_id должен быть числом.",
+            reply_markup=cancel_menu_keyboard(),
+        )
         return
 
     username = parts[1].strip() if len(parts) > 1 else None

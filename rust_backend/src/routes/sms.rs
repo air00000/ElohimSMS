@@ -143,6 +143,7 @@ async fn send_api_campaign(
     let short_link = format!("{}://{}/r/{}", scheme, host, short_code);
 
     let rendered = render_template(&template.text, &short_link, phone, country_code);
+    let template_name = template.name.clone();
 
     info!(phone = %phone, short_code = %short_code, "Sending API campaign");
 
@@ -157,8 +158,8 @@ async fn send_api_campaign(
 
     let campaign = sqlx::query_as::<_, Campaign>(
         "INSERT INTO campaigns
-         (short_code, target_url, phone, country_code, message, status, api_key_id, provider_response, sent_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         (short_code, target_url, phone, country_code, message, template_name, status, api_key_id, provider_response, sent_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
          RETURNING *"
     )
     .bind(&short_code)
@@ -166,6 +167,7 @@ async fn send_api_campaign(
     .bind(phone)
     .bind(country_code)
     .bind(&rendered)
+    .bind(template_name.as_deref())
     .bind(status)
     .bind(api_key_id)
     .bind(&result.provider_response)

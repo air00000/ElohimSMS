@@ -26,7 +26,6 @@ logger = logging.getLogger(__name__)
 
 def setup_routers(dp: Dispatcher) -> None:
     routers = [
-        common.router,
         admin.router,
         keys.router,
         sms.router,
@@ -34,6 +33,7 @@ def setup_routers(dp: Dispatcher) -> None:
         templates.router,
         campaigns.router,
         settings_handler.router,
+        common.router,
     ]
 
     for router in routers:

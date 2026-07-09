@@ -101,7 +101,7 @@ pub struct Template {
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct CreateTemplateRequest {
     pub country_code: String,
-    pub name: Option<String>,
+    pub name: String,
     pub text: String,
 }
 
@@ -113,6 +113,7 @@ pub struct Campaign {
     pub phone: String,
     pub country_code: String,
     pub message: String,
+    pub template_name: Option<String>,
     pub status: String,
     pub click_count: i32,
     pub sent_by_telegram_id: Option<i64>,
@@ -143,6 +144,8 @@ pub struct BotSendSmsRequest {
     pub phone: String,
     pub message: String,
     pub telegram_id: i64,
+    pub url: Option<String>,
+    pub template_name: Option<String>,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]

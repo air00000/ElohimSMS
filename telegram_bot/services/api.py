@@ -118,7 +118,7 @@ class BackendAPI:
         return result.get("data", []) if isinstance(result, dict) else result
 
     async def create_template(
-        self, country_code: str, text: str, name: str | None = None
+        self, country_code: str, text: str, name: str
     ) -> dict[str, Any]:
         return await self.request(
             "POST",
@@ -154,16 +154,26 @@ class BackendAPI:
         )
 
     async def send_sms(
-        self, phone: str, message: str, telegram_id: int
+        self,
+        phone: str,
+        message: str,
+        telegram_id: int,
+        url: str | None = None,
+        template_name: str | None = None,
     ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "phone": phone,
+            "message": message,
+            "telegram_id": telegram_id,
+        }
+        if url is not None:
+            payload["url"] = url
+        if template_name is not None:
+            payload["template_name"] = template_name
         return await self.request(
             "POST",
             "/bot/v1/sms/send",
-            json={
-                "phone": phone,
-                "message": message,
-                "telegram_id": telegram_id,
-            },
+            json=payload,
         )
 
     # ---------- Статистика ----------
