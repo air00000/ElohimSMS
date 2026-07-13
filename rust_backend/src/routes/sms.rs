@@ -48,7 +48,12 @@ pub async fn send_sms(
         return Err(AppError::BadRequest("Message is required".to_string()));
     }
 
-    let (api_key_id, sender_name) = resolve_key_owner(&state, &headers).await?;
+    let (api_key_id, _sender_name) = resolve_key_owner(&state, &headers).await?;
+    let sender_id = payload
+        .sender_id
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .unwrap_or("TRACKING");
     let country_code = detect_country_code(&phone)?;
 
     let template = sqlx::query_as::<_, Template>(
@@ -67,7 +72,7 @@ pub async fn send_sms(
             &country_code,
             &template,
             api_key_id,
-            sender_name.as_deref(),
+            sender_id,
         )
         .await?
     } else {
@@ -76,7 +81,7 @@ pub async fn send_sms(
             &phone,
             target_url,
             api_key_id,
-            sender_name.as_deref(),
+            sender_id,
         )
         .await?
     };
@@ -122,7 +127,7 @@ async fn send_api_campaign(
     country_code: &str,
     template: &Template,
     api_key_id: Option<Uuid>,
-    sender_name: Option<&str>,
+    sender_id: &str,
 ) -> Result<SendOutcome, AppError> {
     let short_code = generate_short_code(state).await?;
 
@@ -142,7 +147,12 @@ async fn send_api_campaign(
                 "http".to_string()
             }
         });
-    let short_link = format!("{}://{}/r/{}", scheme, host, short_code);
+    let short_link = state
+        .config
+        .short_link_base_url
+        .as_ref()
+        .map(|base| format!("{}/r/{}", base, short_code))
+        .unwrap_or_else(|| format!("{}://{}/r/{}", scheme, host, short_code));
 
     let rendered = render_template(&template.text, &short_link, phone, country_code);
     let template_name = template.name.clone();
@@ -151,7 +161,7 @@ async fn send_api_campaign(
 
     let result = state
         .sms_client
-        .send_sms(phone, &rendered, sender_name)
+        .send_sms(phone, &rendered, Some(sender_id))
         .await
         .map_err(|e| AppError::Internal(format!("SMS gateway error: {e}")))?;
 
@@ -195,13 +205,13 @@ async fn send_api_plain_sms(
     phone: &str,
     message: &str,
     _api_key_id: Option<Uuid>,
-    sender_name: Option<&str>,
+    sender_id: &str,
 ) -> Result<SendOutcome, AppError> {
     info!(phone = %phone, "Sending plain SMS via API");
 
     let result = state
         .sms_client
-        .send_sms(phone, message, sender_name)
+        .send_sms(phone, message, Some(sender_id))
         .await
         .map_err(|e| AppError::Internal(format!("SMS gateway error: {e}")))?;
 

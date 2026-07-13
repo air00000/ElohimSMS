@@ -16,10 +16,23 @@ from services.api import api
 
 router = Router()
 
+BTN_DEFAULT_SENDER = "🔤 По умолчанию (TRACKING)"
+
 
 class CampaignFSM(StatesGroup):
     waiting_phone = State()
     waiting_url = State()
+    waiting_sender_id = State()
+
+
+def _sender_id_keyboard() -> types.ReplyKeyboardMarkup:
+    return types.ReplyKeyboardMarkup(
+        keyboard=[
+            [types.KeyboardButton(text=BTN_DEFAULT_SENDER)],
+            [types.KeyboardButton(text=BTN_BACK), types.KeyboardButton(text=BTN_MENU)],
+        ],
+        resize_keyboard=True,
+    )
 
 
 @router.message(lambda m: m.text == BTN_SEND_CAMPAIGN)
@@ -83,9 +96,56 @@ async def process_campaign_url(message: types.Message, state: FSMContext):
         )
         return
 
+    await state.update_data(url=url)
+    await state.set_state(CampaignFSM.waiting_sender_id)
+    await message.answer(
+        "Введите имя отправителя (Sender ID).\n\n"
+        "Максимум 11 латинских букв/цифр. Нажмите <b>По умолчанию (TRACKING)</b>, "
+        "чтобы оставить стандартное значение.",
+        reply_markup=_sender_id_keyboard(),
+        parse_mode="HTML",
+    )
+
+
+@router.message(CampaignFSM.waiting_sender_id)
+async def process_campaign_sender_id(message: types.Message, state: FSMContext):
+    if not message.text:
+        await message.answer(
+            "❌ Пожалуйста, отправьте текстовое сообщение.",
+            reply_markup=_sender_id_keyboard(),
+        )
+        return
+
+    text = message.text.strip()
+    if text == BTN_BACK:
+        await state.set_state(CampaignFSM.waiting_url)
+        await message.answer(
+            "Введите целевую ссылку (URL):",
+            reply_markup=cancel_menu_keyboard(),
+        )
+        return
+    if text == BTN_MENU:
+        await go_to_main_menu(message, state)
+        return
+
+    sender_id = "TRACKING" if text == BTN_DEFAULT_SENDER else text
+    if not sender_id:
+        await message.answer(
+            "❌ Имя отправителя не может быть пустым.",
+            reply_markup=_sender_id_keyboard(),
+        )
+        return
+    if len(sender_id) > 11:
+        await message.answer(
+            "❌ Имя отправителя не должно превышать 11 символов.",
+            reply_markup=_sender_id_keyboard(),
+        )
+        return
+
     data = await state.get_data()
     phone = data.get("phone")
-    if not phone:
+    url = data.get("url")
+    if not phone or not url:
         await state.clear()
         is_owner = await user_is_owner(message.from_user.id)
         await message.answer(
@@ -97,7 +157,9 @@ async def process_campaign_url(message: types.Message, state: FSMContext):
     await message.answer("⏳ Отправка кампании...")
 
     try:
-        result = await api.send_campaign(phone, url, message.from_user.id)
+        result = await api.send_campaign(
+            phone, url, message.from_user.id, sender_id=sender_id
+        )
     except Exception as e:
         await state.clear()
         is_owner = await user_is_owner(message.from_user.id)

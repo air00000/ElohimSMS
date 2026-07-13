@@ -19,6 +19,7 @@ pub struct SmsLog {
 pub struct SendSmsRequest {
     pub phone: String,
     pub message: String,
+    pub sender_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -130,6 +131,7 @@ pub struct SendCampaignRequest {
     pub phone: String,
     pub url: String,
     pub telegram_id: i64,
+    pub sender_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -148,6 +150,7 @@ pub struct BotSendSmsRequest {
     pub telegram_id: i64,
     pub url: Option<String>,
     pub template_name: Option<String>,
+    pub sender_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]

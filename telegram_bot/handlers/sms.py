@@ -18,6 +18,7 @@ router = Router()
 
 BTN_MANUAL = "✍️ Набрать вручную"
 BTN_TEMPLATE = "📋 Выбрать шаблон"
+BTN_DEFAULT_SENDER = "🔤 По умолчанию (TRACKING)"
 
 
 class SendSmsFSM(StatesGroup):
@@ -25,6 +26,7 @@ class SendSmsFSM(StatesGroup):
     waiting_choose = State()
     waiting_text = State()
     waiting_url = State()
+    waiting_sender_id = State()
 
 
 # Префиксы → коды стран. Должны совпадать с логикой backend.
@@ -92,6 +94,16 @@ def _choose_keyboard(country_code: str | None) -> types.ReplyKeyboardMarkup:
     ])
     return types.ReplyKeyboardMarkup(
         keyboard=keyboard_buttons,
+        resize_keyboard=True,
+    )
+
+
+def _sender_id_keyboard() -> types.ReplyKeyboardMarkup:
+    return types.ReplyKeyboardMarkup(
+        keyboard=[
+            [types.KeyboardButton(text=BTN_DEFAULT_SENDER)],
+            [types.KeyboardButton(text=BTN_BACK), types.KeyboardButton(text=BTN_MENU)],
+        ],
         resize_keyboard=True,
     )
 
@@ -357,19 +369,67 @@ async def process_sms_url(message: types.Message, state: FSMContext):
         )
         return
 
-    data = await _get_state_data_or_cancel(message, state, "phone", "text")
+    await state.update_data(url=url)
+    await state.set_state(SendSmsFSM.waiting_sender_id)
+    await message.answer(
+        "Введите имя отправителя (Sender ID).\n\n"
+        "Максимум 11 латинских букв/цифр. Нажмите <b>По умолчанию (TRACKING)</b>, "
+        "чтобы оставить стандартное значение.",
+        reply_markup=_sender_id_keyboard(),
+        parse_mode="HTML",
+    )
+
+
+@router.message(SendSmsFSM.waiting_sender_id)
+async def process_sms_sender_id(message: types.Message, state: FSMContext):
+    text = await _require_text(message)
+    if text is None:
+        return
+    if text == BTN_MENU:
+        await go_to_main_menu(message, state)
+        return
+    if text == BTN_BACK:
+        await state.set_state(SendSmsFSM.waiting_url)
+        await message.answer(
+            "Введите целевую ссылку (URL), на которую будет вести <code>{link}</code>:",
+            reply_markup=cancel_menu_keyboard(),
+            parse_mode="HTML",
+        )
+        return
+
+    sender_id = "TRACKING" if text == BTN_DEFAULT_SENDER else text.strip()
+    if not sender_id:
+        await message.answer(
+            "❌ Имя отправителя не может быть пустым.",
+            reply_markup=_sender_id_keyboard(),
+        )
+        return
+    if len(sender_id) > 11:
+        await message.answer(
+            "❌ Имя отправителя не должно превышать 11 символов.",
+            reply_markup=_sender_id_keyboard(),
+        )
+        return
+
+    data = await _get_state_data_or_cancel(message, state, "phone", "text", "url")
     if data is None:
         return
 
     phone = data["phone"]
     message_text = data["text"]
+    url = data["url"]
+    template_name = data.get("template_name")
 
     await message.answer("⏳ Отправка SMS...")
 
-    template_name = data.get("template_name")
     try:
         result = await api.send_sms(
-            phone, message_text, message.from_user.id, url=url, template_name=template_name
+            phone,
+            message_text,
+            message.from_user.id,
+            url=url,
+            template_name=template_name,
+            sender_id=sender_id,
         )
     except Exception as e:
         await state.clear()

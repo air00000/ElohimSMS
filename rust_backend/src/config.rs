@@ -8,6 +8,7 @@ pub struct Config {
     pub api_key: Option<String>,
     pub internal_bot_token: String,
     pub bot_internal_url: String,
+    pub short_link_base_url: Option<String>,
     pub sms_providers: Vec<SmsProviderConfig>,
 }
 
@@ -35,6 +36,11 @@ impl Config {
             .trim_end_matches('/')
             .to_string();
 
+        let short_link_base_url = std::env::var("SHORT_LINK_BASE_URL")
+            .ok()
+            .map(|s| s.trim_end_matches('/').to_string())
+            .filter(|s| !s.is_empty());
+
         let sms_providers = load_provider_configs_from_env();
 
         Ok(Self {
@@ -43,6 +49,7 @@ impl Config {
             api_key,
             internal_bot_token,
             bot_internal_url,
+            short_link_base_url,
             sms_providers,
         })
     }

@@ -60,20 +60,6 @@ async fn generate_short_code(pool: &sqlx::PgPool) -> Result<String, AppError> {
     }
 }
 
-async fn get_admin_sender_name(
-    pool: &sqlx::PgPool,
-    telegram_id: i64,
-) -> Result<Option<String>, AppError> {
-    let row = sqlx::query_as::<_, (Option<String>,)>(
-        "SELECT sender_name FROM admins WHERE telegram_id = $1",
-    )
-    .bind(telegram_id)
-    .fetch_optional(pool)
-    .await?;
-
-    Ok(row.map(|r| r.0).flatten())
-}
-
 async fn get_favorite_template(
     pool: &sqlx::PgPool,
     country_code: &str,
@@ -456,21 +442,25 @@ pub async fn bot_send_sms(
         return Err(AppError::BadRequest("Message is required".to_string()));
     }
 
+    let sender_id = payload
+        .sender_id
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .unwrap_or("TRACKING");
+
     // Если указан URL и сообщение содержит {link} — отправляем как кампанию с короткой ссылкой.
     if let Some(target_url) = payload.url {
         let target_url = target_url.trim();
         if !target_url.is_empty() && message.contains("{link}") {
-            return send_bot_link_campaign(&state, headers, host, phone, message, target_url, payload.telegram_id, payload.template_name).await;
+            return send_bot_link_campaign(&state, headers, host, phone, message, target_url, payload.telegram_id, payload.template_name, sender_id).await;
         }
     }
-
-    let sender_name = get_admin_sender_name(&state.pool, payload.telegram_id).await?;
 
     info!(phone = %phone, "Sending SMS from bot");
 
     let result = state
         .sms_client
-        .send_sms(&phone, message, sender_name.as_deref())
+        .send_sms(&phone, message, Some(sender_id))
         .await
         .map_err(|e| AppError::Internal(format!("SMS gateway error: {e}")))?;
 
@@ -512,6 +502,7 @@ async fn send_bot_link_campaign(
     target_url: &str,
     telegram_id: i64,
     template_name: Option<String>,
+    sender_id: &str,
 ) -> Result<Json<SendSmsResponse>, AppError> {
     let country_code = detect_country_code(&phone)?;
     let short_code = generate_short_code(&state.pool).await?;
@@ -522,16 +513,19 @@ async fn send_bot_link_campaign(
         "http"
     };
     let scheme = request_scheme(&headers, default_scheme);
-    let short_link = format!("{}://{}/r/{}", scheme, host, short_code);
+    let short_link = state
+        .config
+        .short_link_base_url
+        .as_ref()
+        .map(|base| format!("{}/r/{}", base, short_code))
+        .unwrap_or_else(|| format!("{}://{}/r/{}", scheme, host, short_code));
 
     let rendered = message.replace("{link}", &short_link);
-    let sender_name = get_admin_sender_name(&state.pool, telegram_id).await?;
-
     info!(phone = %phone, short_code = %short_code, "Sending bot link campaign");
 
     let result = state
         .sms_client
-        .send_sms(&phone, &rendered, sender_name.as_deref())
+        .send_sms(&phone, &rendered, Some(sender_id))
         .await
         .map_err(|e| AppError::Internal(format!("SMS gateway error: {e}")))?;
 
@@ -610,16 +604,25 @@ pub async fn send_campaign(
         "http"
     };
     let scheme = request_scheme(&headers, default_scheme);
-    let short_link = format!("{}://{}/r/{}", scheme, host, short_code);
+    let short_link = state
+        .config
+        .short_link_base_url
+        .as_ref()
+        .map(|base| format!("{}/r/{}", base, short_code))
+        .unwrap_or_else(|| format!("{}://{}/r/{}", scheme, host, short_code));
 
     let message = render_template(&template.text, &short_link, &phone, &country_code);
-    let sender_name = get_admin_sender_name(&state.pool, payload.telegram_id).await?;
+    let sender_id = payload
+        .sender_id
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .unwrap_or("TRACKING");
 
     info!(phone = %phone, short_code = %short_code, "Sending campaign");
 
     let result = state
         .sms_client
-        .send_sms(&phone, &message, sender_name.as_deref())
+        .send_sms(&phone, &message, Some(sender_id))
         .await
         .map_err(|e| AppError::Internal(format!("SMS gateway error: {e}")))?;
 

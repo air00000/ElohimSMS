@@ -147,16 +147,19 @@ class BackendAPI:
     # ---------- SMS / Кампании ----------
 
     async def send_campaign(
-        self, phone: str, url: str, telegram_id: int
+        self, phone: str, url: str, telegram_id: int, sender_id: str | None = None
     ) -> dict[str, Any]:
+        payload = {
+            "phone": phone,
+            "url": url,
+            "telegram_id": telegram_id,
+        }
+        if sender_id is not None:
+            payload["sender_id"] = sender_id
         return await self.request(
             "POST",
             "/bot/v1/campaigns/send",
-            json={
-                "phone": phone,
-                "url": url,
-                "telegram_id": telegram_id,
-            },
+            json=payload,
         )
 
     async def send_sms(
@@ -166,6 +169,7 @@ class BackendAPI:
         telegram_id: int,
         url: str | None = None,
         template_name: str | None = None,
+        sender_id: str | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "phone": phone,
@@ -176,6 +180,8 @@ class BackendAPI:
             payload["url"] = url
         if template_name is not None:
             payload["template_name"] = template_name
+        if sender_id is not None:
+            payload["sender_id"] = sender_id
         return await self.request(
             "POST",
             "/bot/v1/sms/send",
