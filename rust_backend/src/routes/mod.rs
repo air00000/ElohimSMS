@@ -3,11 +3,12 @@ pub mod bot;
 pub mod health;
 pub mod links;
 pub mod sms;
+pub mod webhooks;
 
 use crate::{openapi::ApiDoc, state::AppState};
 use axum::{
     middleware,
-    routing::{delete, get, post},
+    routing::{delete, get, post, put},
     Router,
 };
 use std::sync::Arc;
@@ -35,6 +36,7 @@ pub fn create_router(state: AppState) -> Router {
 
     let api_key_routes = Router::new()
         .route("/sms/send", post(sms::send_sms))
+        .route("/webhook", put(webhooks::configure_webhook))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::require_api_key,

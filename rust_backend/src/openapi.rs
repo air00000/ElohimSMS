@@ -1,8 +1,9 @@
 use crate::models::{
-    Admin, ApiKeyListItem, BotSendSmsRequest, Campaign, CreateAdminRequest, CreateKeyRequest,
-    CreateKeyResponse, CreateTemplateRequest, EnsureOwnerRequest, HealthResponse,
-    SendCampaignRequest, SendCampaignResponse, SendSmsRequest, SendSmsResponse, SmsLog,
-    Template, UpdateSenderNameRequest,
+    Admin, ApiKeyListItem, BotSendSmsRequest, Campaign, ConfigureWebhookRequest,
+    ConfigureWebhookResponse, CreateAdminRequest, CreateKeyRequest, CreateKeyResponse,
+    CreateTemplateRequest, EnsureOwnerRequest, HealthResponse, SendCampaignRequest,
+    SendCampaignResponse, SendSmsRequest, SendSmsResponse, SmsLog, Template,
+    UpdateSenderNameRequest,
 };
 use utoipa::openapi::security::{ApiKey as SecurityApiKey, ApiKeyValue, SecurityScheme};
 use utoipa::{Modify, OpenApi};
@@ -31,6 +32,7 @@ impl Modify for SecurityAddon {
     paths(
         crate::routes::health::health,
         crate::routes::sms::send_sms,
+        crate::routes::webhooks::configure_webhook,
         crate::routes::bot::list_admins,
         crate::routes::bot::create_admin,
         crate::routes::bot::ensure_owner,
@@ -60,6 +62,8 @@ impl Modify for SecurityAddon {
             Template,
             CreateTemplateRequest,
             Campaign,
+            ConfigureWebhookRequest,
+            ConfigureWebhookResponse,
             SendCampaignRequest,
             SendCampaignResponse,
             BotSendSmsRequest,
@@ -71,6 +75,7 @@ impl Modify for SecurityAddon {
     tags(
         (name = "health", description = "Health check"),
         (name = "sms", description = "SMS sending"),
+        (name = "webhook", description = "External webhook configuration"),
         (name = "bot", description = "Telegram bot internal API"),
     ),
     security(

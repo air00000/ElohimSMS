@@ -71,6 +71,7 @@ pub async fn send_sms(
             &country_code,
             &template,
             api_key_id,
+            payload.external_id.as_deref(),
             sender_id,
         )
         .await?
@@ -125,6 +126,7 @@ async fn send_api_campaign(
     country_code: &str,
     template: &Template,
     api_key_id: Option<Uuid>,
+    external_id: Option<&str>,
     sender_id: &str,
 ) -> Result<SendOutcome, AppError> {
     let short_code = generate_short_code(state).await?;
@@ -148,8 +150,8 @@ async fn send_api_campaign(
 
     let campaign = sqlx::query_as::<_, Campaign>(
         "INSERT INTO campaigns
-         (short_code, target_url, phone, country_code, message, template_name, status, api_key_id, provider_response, provider_name, sent_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+         (short_code, target_url, phone, country_code, message, template_name, status, api_key_id, external_id, provider_response, provider_name, sent_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
          RETURNING *"
     )
     .bind(&short_code)
@@ -160,6 +162,7 @@ async fn send_api_campaign(
     .bind(template_name.as_deref())
     .bind(status)
     .bind(api_key_id)
+    .bind(external_id)
     .bind(&provider_response)
     .bind(&provider_name)
     .bind(sent_at)

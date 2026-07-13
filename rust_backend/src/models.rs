@@ -20,6 +20,12 @@ pub struct SendSmsRequest {
     pub phone: String,
     pub message: String,
     pub sender_id: Option<String>,
+
+    /// Идентификатор сущности во внешней системе.
+    ///
+    /// Например: Telegram chat_id, order_id или UUID операции.
+    /// Возвращается без изменений в webhook-событии.
+    pub external_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -120,9 +126,11 @@ pub struct Campaign {
     pub click_count: i32,
     pub sent_by_telegram_id: Option<i64>,
     pub api_key_id: Option<Uuid>,
+    pub external_id: Option<String>,
     pub provider_response: Option<serde_json::Value>,
     pub provider_name: Option<String>,
     pub sent_at: Option<DateTime<Utc>>,
+    pub first_clicked_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -171,4 +179,23 @@ pub struct StatsResponse {
     pub keys_total: i64,
     pub keys_active: i64,
     pub balance: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct ConfigureWebhookRequest {
+    /// Публичный HTTPS endpoint внешнего бота.
+    pub url: String,
+
+    /// Секрет для HMAC-SHA256. Минимум 16 символов.
+    pub secret: String,
+
+    /// По умолчанию webhook включается.
+    pub is_active: Option<bool>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ConfigureWebhookResponse {
+    pub success: bool,
+    pub url: String,
+    pub is_active: bool,
 }

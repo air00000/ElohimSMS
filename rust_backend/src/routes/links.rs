@@ -1,4 +1,11 @@
-use crate::{error::AppError, routes::bot::notify_admin, state::AppState};
+use crate::{
+    error::AppError,
+    routes::{
+        bot::notify_admin,
+        webhooks::dispatch_link_verified,
+    },
+    state::AppState,
+};
 use axum::{extract::Path, extract::State, Json};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -18,6 +25,7 @@ pub struct LinkVerifyRequest {
 #[derive(Debug, FromRow)]
 struct CampaignInfo {
     id: Uuid,
+    short_code: String,
     target_url: String,
     phone: String,
     country_code: String,
@@ -25,6 +33,7 @@ struct CampaignInfo {
     template_name: Option<String>,
     sent_by_telegram_id: Option<i64>,
     api_key_id: Option<Uuid>,
+    external_id: Option<String>,
 }
 
 async fn get_owner_telegram_id(pool: &sqlx::PgPool) -> Result<Option<i64>, AppError> {
@@ -104,7 +113,7 @@ pub async fn verify_link(
     }
 
     let campaign = sqlx::query_as::<_, CampaignInfo>(
-        "SELECT id, target_url, phone, country_code, message, template_name, sent_by_telegram_id, api_key_id
+        "SELECT id, short_code, target_url, phone, country_code, message, template_name, sent_by_telegram_id, api_key_id, external_id
          FROM campaigns WHERE short_code = $1"
     )
     .bind(&short_code)
@@ -139,33 +148,87 @@ pub async fn verify_link(
     }
 
     // Фиксируем переход.
-    sqlx::query("UPDATE campaigns SET click_count = click_count + 1 WHERE id = $1")
-        .bind(campaign.id)
-        .execute(&state.pool)
-        .await?;
+    let is_first_click = sqlx::query_scalar::<_, bool>(
+        r#"
+        WITH locked AS (
+            SELECT id, first_clicked_at
+            FROM campaigns
+            WHERE id = $1
+            FOR UPDATE
+        ),
+        updated AS (
+            UPDATE campaigns AS campaign
+            SET
+                click_count = campaign.click_count + 1,
+                first_clicked_at = COALESCE(campaign.first_clicked_at, NOW())
+            FROM locked
+            WHERE campaign.id = locked.id
+            RETURNING locked.first_clicked_at IS NULL AS is_first_click
+        )
+        SELECT is_first_click
+        FROM updated
+        "#,
+    )
+    .bind(campaign.id)
+    .fetch_one(&state.pool)
+    .await?;
 
     sqlx::query("INSERT INTO campaign_clicks (campaign_id) VALUES ($1)")
         .bind(campaign.id)
         .execute(&state.pool)
         .await?;
 
-    if let Some(tid) = admin_telegram_id {
-        let template_line = if let Some(name) = &campaign.template_name {
-            format!("\n<b>Шаблон:</b> {}", name)
-        } else {
-            String::new()
-        };
+    if is_first_click {
+        if let Some(tid) = admin_telegram_id {
+            let template_line = if let Some(name) = &campaign.template_name {
+                format!("\n<b>Шаблон:</b> {}", name)
+            } else {
+                String::new()
+            };
 
-        let text = format!(
-            "🔗 <b>Переход по ссылке</b>\n\n<b>Кампания:</b> <code>{}</code>\n<b>Номер:</b> <code>{}</code>\n<b>Страна:</b> {}\n<b>Сообщение:</b> <code>{}</code>{}\n<b>Время:</b> {}",
-            campaign.id,
-            campaign.phone,
-            campaign.country_code,
-            campaign.message,
-            template_line,
-            chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
-        );
-        notify_admin(&state, tid, text);
+            let text = format!(
+                "🔗 <b>Переход по ссылке</b>\n\n<b>Кампания:</b> <code>{}</code>\n<b>Номер:</b> <code>{}</code>\n<b>Страна:</b> {}\n<b>Сообщение:</b> <code>{}</code>{}\n<b>Время:</b> {}",
+                campaign.id,
+                campaign.phone,
+                campaign.country_code,
+                campaign.message,
+                template_line,
+                chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
+            );
+            notify_admin(&state, tid, text);
+        }
+    }
+
+    if is_first_click {
+        if let Some(api_key_id) = campaign.api_key_id {
+            let webhook_state = state.clone();
+            let campaign_id = campaign.id;
+            let external_id = campaign.external_id.clone();
+            let short_code = campaign.short_code.clone();
+            let occurred_at = chrono::Utc::now();
+
+            // Не задерживаем редирект клиента ожиданием внешнего сервиса.
+            tokio::spawn(async move {
+                if let Err(error) = dispatch_link_verified(
+                    &webhook_state,
+                    api_key_id,
+                    campaign_id,
+                    external_id,
+                    short_code,
+                    1,
+                    occurred_at,
+                )
+                .await
+                {
+                    tracing::error!(
+                        campaign_id = %campaign_id,
+                        api_key_id = %api_key_id,
+                        error = %error,
+                        "Failed to deliver campaign.link_verified webhook"
+                    );
+                }
+            });
+        }
     }
 
     tracing::info!(
