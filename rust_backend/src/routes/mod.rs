@@ -1,6 +1,7 @@
 pub mod auth;
 pub mod bot;
 pub mod health;
+pub mod links;
 pub mod sms;
 
 use crate::{openapi::ApiDoc, state::AppState};
@@ -19,7 +20,9 @@ use utoipa_swagger_ui::SwaggerUi;
 pub fn create_router(state: AppState) -> Router {
     let public_routes = Router::new()
         .route("/health", get(health::health))
-        .route("/r/:short_code", get(bot::redirect));
+        .route("/r/:short_code", get(bot::redirect))
+        .route("/api/v1/links/:short_code", get(links::check_link))
+        .route("/api/v1/links/:short_code/verify", post(links::verify_link));
 
     let governor_conf = Arc::new(
         GovernorConfigBuilder::default()

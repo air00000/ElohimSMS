@@ -11,8 +11,7 @@ use crate::{
     state::AppState,
 };
 use axum::{
-    extract::{Host, Path, State},
-    http::HeaderMap,
+    extract::{Path, State},
     Json,
 };
 use rand::Rng as _;
@@ -20,15 +19,6 @@ use serde_json::json;
 use sqlx::FromRow;
 use tracing::{info, instrument};
 use uuid::Uuid;
-
-fn request_scheme(headers: &HeaderMap, default: &str) -> String {
-    headers
-        .get("X-Forwarded-Proto")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_lowercase())
-        .filter(|s| s == "http" || s == "https")
-        .unwrap_or_else(|| default.to_string())
-}
 
 /// Рендерит шаблон, подставляя placeholders.
 pub(crate) fn render_template(template: &str, link: &str, phone: &str, country: &str) -> String {
@@ -75,7 +65,7 @@ async fn get_favorite_template(
 }
 
 /// Отправляет уведомление админу через внутренний endpoint бота.
-fn notify_admin(state: &AppState, telegram_id: i64, text: String) {
+pub(crate) fn notify_admin(state: &AppState, telegram_id: i64, text: String) {
     let client = state.http_client.clone();
     let url = format!("{}/internal/notify", state.bot_internal_url);
     let token = state.internal_bot_token.clone();
@@ -452,8 +442,6 @@ pub async fn set_favorite_template(
 #[instrument(skip(state, payload), fields(phone = %payload.phone))]
 pub async fn bot_send_sms(
     State(state): State<AppState>,
-    headers: HeaderMap,
-    Host(host): Host,
     Json(payload): Json<BotSendSmsRequest>,
 ) -> Result<Json<SendSmsResponse>, AppError> {
     let phone = normalize_phone(&payload.phone)?;
@@ -472,7 +460,7 @@ pub async fn bot_send_sms(
     if let Some(target_url) = payload.url {
         let target_url = target_url.trim();
         if !target_url.is_empty() && message.contains("{link}") {
-            return send_bot_link_campaign(&state, headers, host, phone, message, target_url, payload.telegram_id, payload.template_name, sender_id).await;
+            return send_bot_link_campaign(&state, phone, message, target_url, payload.telegram_id, payload.template_name, sender_id).await;
         }
     }
 
@@ -515,8 +503,6 @@ pub async fn bot_send_sms(
 
 async fn send_bot_link_campaign(
     state: &AppState,
-    headers: HeaderMap,
-    host: String,
     phone: String,
     message: &str,
     target_url: &str,
@@ -527,18 +513,7 @@ async fn send_bot_link_campaign(
     let country_code = detect_country_code(&phone)?;
     let short_code = generate_short_code(&state.pool).await?;
 
-    let default_scheme = if state.bot_internal_url.starts_with("https") {
-        "https"
-    } else {
-        "http"
-    };
-    let scheme = request_scheme(&headers, default_scheme);
-    let short_link = state
-        .config
-        .short_link_base_url
-        .as_ref()
-        .map(|base| format!("{}/r/{}", base, short_code))
-        .unwrap_or_else(|| format!("{}://{}/r/{}", scheme, host, short_code));
+    let short_link = state.config.short_link(&short_code);
 
     let rendered = message.replace("{link}", &short_link);
     info!(phone = %phone, short_code = %short_code, "Sending bot link campaign");
@@ -597,8 +572,6 @@ async fn send_bot_link_campaign(
 #[instrument(skip(state, payload), fields(phone = %payload.phone))]
 pub async fn send_campaign(
     State(state): State<AppState>,
-    headers: HeaderMap,
-    Host(host): Host,
     Json(payload): Json<SendCampaignRequest>,
 ) -> Result<Json<SendCampaignResponse>, AppError> {
     let phone = normalize_phone(&payload.phone)?;
@@ -618,18 +591,7 @@ pub async fn send_campaign(
         })?;
 
     let short_code = generate_short_code(&state.pool).await?;
-    let default_scheme = if state.bot_internal_url.starts_with("https") {
-        "https"
-    } else {
-        "http"
-    };
-    let scheme = request_scheme(&headers, default_scheme);
-    let short_link = state
-        .config
-        .short_link_base_url
-        .as_ref()
-        .map(|base| format!("{}/r/{}", base, short_code))
-        .unwrap_or_else(|| format!("{}://{}/r/{}", scheme, host, short_code));
+    let short_link = state.config.short_link(&short_code);
 
     let message = render_template(&template.text, &short_link, &phone, &country_code);
     let sender_id = payload

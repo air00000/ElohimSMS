@@ -66,7 +66,6 @@ pub async fn send_sms(
     let outcome = if let Some(template) = template {
         send_api_campaign(
             &state,
-            &headers,
             &phone,
             target_url,
             &country_code,
@@ -121,7 +120,6 @@ pub async fn send_sms(
 
 async fn send_api_campaign(
     state: &AppState,
-    headers: &HeaderMap,
     phone: &str,
     target_url: &str,
     country_code: &str,
@@ -130,29 +128,7 @@ async fn send_api_campaign(
     sender_id: &str,
 ) -> Result<SendOutcome, AppError> {
     let short_code = generate_short_code(state).await?;
-
-    let host = headers
-        .get(axum::http::header::HOST)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("localhost");
-    let scheme = headers
-        .get("X-Forwarded-Proto")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_lowercase())
-        .filter(|s| s == "http" || s == "https")
-        .unwrap_or_else(|| {
-            if state.bot_internal_url.starts_with("https") {
-                "https".to_string()
-            } else {
-                "http".to_string()
-            }
-        });
-    let short_link = state
-        .config
-        .short_link_base_url
-        .as_ref()
-        .map(|base| format!("{}/r/{}", base, short_code))
-        .unwrap_or_else(|| format!("{}://{}/r/{}", scheme, host, short_code));
+    let short_link = state.config.short_link(&short_code);
 
     let rendered = render_template(&template.text, &short_link, phone, country_code);
     let template_name = template.name.clone();
