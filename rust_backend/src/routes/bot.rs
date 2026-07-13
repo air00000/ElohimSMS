@@ -86,15 +86,35 @@ fn notify_admin(state: &AppState, telegram_id: i64, text: String) {
             "text": text,
         });
 
-        let res = client
+        match client
             .post(&url)
             .header("X-Internal-Bot-Token", token)
             .json(&payload)
             .send()
-            .await;
-
-        if let Err(e) = res {
-            tracing::warn!("Failed to notify admin {}: {}", telegram_id, e);
+            .await
+        {
+            Ok(response) => {
+                let status = response.status();
+                if status.is_success() || status == 204 {
+                    tracing::info!(telegram_id, "Admin notified about link click");
+                } else {
+                    let body = response.text().await.unwrap_or_default();
+                    tracing::warn!(
+                        telegram_id,
+                        status = %status,
+                        body = %body,
+                        "Failed to notify admin: bot returned error"
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    telegram_id,
+                    error = %e,
+                    url = %url,
+                    "Failed to notify admin: request error"
+                );
+            }
         }
     });
 }
@@ -688,14 +708,23 @@ pub async fn redirect(
     State(state): State<AppState>,
     Path(short_code): Path<String>,
 ) -> Result<axum::response::Redirect, AppError> {
+    tracing::info!(short_code = %short_code, "Redirect request received");
+
     let campaign = sqlx::query_as::<_, CampaignNotifyInfo>(
         "SELECT id, target_url, phone, country_code, message, template_name, sent_by_telegram_id, api_key_id
          FROM campaigns WHERE short_code = $1"
     )
     .bind(&short_code)
     .fetch_optional(&state.pool)
-    .await?
-    .ok_or(AppError::NotFound)?;
+    .await?;
+
+    let campaign = match campaign {
+        Some(c) => c,
+        None => {
+            tracing::warn!(short_code = %short_code, "Campaign not found for redirect");
+            return Err(AppError::NotFound);
+        }
+    };
 
     let mut admin_telegram_id = if let Some(tid) = campaign.sent_by_telegram_id {
         Some(tid)
@@ -731,6 +760,11 @@ pub async fn redirect(
     .await?;
 
     if let Some(tid) = admin_telegram_id {
+        tracing::info!(
+            admin_telegram_id = tid,
+            campaign_id = %campaign.id,
+            "Sending click notification to admin"
+        );
         let template_line = if let Some(name) = &campaign.template_name {
             format!("\n<b>Шаблон:</b> {}", name)
         } else {
