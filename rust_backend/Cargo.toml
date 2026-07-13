@@ -18,6 +18,7 @@ chrono = { version = "0.4", features = ["serde"] }
 
 utoipa = { version = "4", features = ["axum_extras", "uuid", "chrono"] }
 utoipa-swagger-ui = { version = "7", features = ["axum"] }
+async-trait = "0.1"
 anyhow = "1.0"
 thiserror = "2.0"
 dotenvy = "0.15"

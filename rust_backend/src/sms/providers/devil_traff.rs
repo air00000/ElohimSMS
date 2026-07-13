@@ -1,49 +1,63 @@
-use super::config::SmsGatewayConfig;
+use crate::sms::{SmsProvider, SmsResult};
 use anyhow::Context;
+use async_trait::async_trait;
 use reqwest::{Client, Method};
 use serde_json::{json, Value};
 use tracing::{debug, instrument};
 
+/// Конфигурация для одного аккаунта/эндпоинта Devil-Traff.
 #[derive(Debug, Clone)]
-pub struct SmsClient {
+pub struct DevilTraffConfig {
+    pub base_url: String,
+    pub auth_token: String,
+    pub route: String,
+    pub sender_id: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct DevilTraffProvider {
+    name: String,
     client: Client,
-    config: SmsGatewayConfig,
+    config: DevilTraffConfig,
 }
 
-#[derive(Debug, Clone)]
-pub struct SmsResult {
-    pub success: bool,
-    pub provider_response: Value,
-}
-
-impl SmsClient {
-    pub fn new(config: SmsGatewayConfig) -> Self {
+impl DevilTraffProvider {
+    pub fn new(name: impl Into<String>, config: DevilTraffConfig) -> Self {
         Self {
+            name: name.into(),
             client: Client::new(),
             config,
         }
+    }
+}
+
+#[async_trait]
+impl SmsProvider for DevilTraffProvider {
+    fn name(&self) -> &str {
+        &self.name
     }
 
     /// Отправляет одно SMS через Devil-Traff API.
     ///
     /// Документация: PUT /api/send-sms
     /// Body: { route, sender_id, number, message }
-    #[instrument(skip(self), fields(phone = %phone))]
-    pub async fn send_sms(
+    #[instrument(skip(self), fields(phone = %phone, provider = %self.name))]
+    async fn send_sms(
         &self,
         phone: &str,
         message: &str,
         sender_id: Option<&str>,
     ) -> anyhow::Result<SmsResult> {
         if self.config.base_url.is_empty() || self.config.base_url.contains("example.com") {
-            return Ok(SmsResult {
-                success: true,
-                provider_response: json!({
+            return Ok(SmsResult::new(
+                &self.name,
+                true,
+                json!({
                     "mock": true,
                     "message": "SMS gateway URL is not configured. Message logged but not sent.",
                     "phone": phone,
                 }),
-            });
+            ));
         }
 
         let url = format!("{}/api/send-sms", self.config.base_url);
@@ -62,6 +76,7 @@ impl SmsClient {
             url = %url,
             route = %self.config.route,
             sender_id = %sender,
+            provider = %self.name,
             "Sending SMS via Devil-Traff"
         );
 
@@ -72,7 +87,12 @@ impl SmsClient {
             .json(&body)
             .send()
             .await
-            .context("Failed to send request to Devil-Traff SMS gateway")?;
+            .with_context(|| {
+                format!(
+                    "Failed to send request to Devil-Traff provider {}",
+                    self.name
+                )
+            })?;
 
         let status = response.status();
         let provider_response = response
@@ -86,18 +106,16 @@ impl SmsClient {
             tracing::warn!(
                 status = %status,
                 response = %provider_response,
+                provider = %self.name,
                 "Devil-Traff SMS gateway returned error status"
             );
         }
 
-        Ok(SmsResult {
-            success,
-            provider_response,
-        })
+        Ok(SmsResult::new(&self.name, success, provider_response))
     }
 
     /// Запрашивает баланс у SMS-шлюза.
-    pub async fn get_balance(&self) -> anyhow::Result<serde_json::Value> {
+    async fn get_balance(&self) -> anyhow::Result<Value> {
         if self.config.base_url.is_empty() || self.config.base_url.contains("example.com") {
             return Ok(json!({
                 "mock": true,
@@ -113,7 +131,7 @@ impl SmsClient {
             .bearer_auth(&self.config.auth_token)
             .send()
             .await
-            .context("Failed to request SMS gateway balance")?;
+            .with_context(|| format!("Failed to request balance for provider {}", self.name))?;
 
         let status = response.status();
         let body = response
@@ -125,7 +143,8 @@ impl SmsClient {
             tracing::warn!(
                 status = %status,
                 response = %body,
-                "SMS gateway balance request returned error"
+                provider = %self.name,
+                "Devil-Traff balance request returned error"
             );
         }
 

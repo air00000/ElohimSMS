@@ -475,15 +475,17 @@ pub async fn bot_send_sms(
         .map_err(|e| AppError::Internal(format!("SMS gateway error: {e}")))?;
 
     let status = if result.success { "sent" } else { "failed" };
+    let provider_response = result.provider_response_json();
 
     sqlx::query(
-        "INSERT INTO sms_logs (phone, message, status, provider_response, telegram_id)
-         VALUES ($1, $2, $3, $4, $5)"
+        "INSERT INTO sms_logs (phone, message, status, provider_response, provider_name, telegram_id)
+         VALUES ($1, $2, $3, $4, $5, $6)"
     )
     .bind(&phone)
     .bind(message)
     .bind(status)
-    .bind(&result.provider_response)
+    .bind(&provider_response)
+    .bind(&result.provider_name)
     .bind(payload.telegram_id)
     .execute(&state.pool)
     .await?;
@@ -495,7 +497,7 @@ pub async fn bot_send_sms(
         } else {
             "SMS gateway rejected the message".to_string()
         },
-        provider_response: Some(result.provider_response),
+        provider_response: Some(provider_response),
         campaign_id: None,
         short_link: None,
     }))
@@ -535,11 +537,12 @@ async fn send_bot_link_campaign(
 
     let status = if result.success { "sent" } else { "failed" };
     let sent_at = if result.success { Some(chrono::Utc::now()) } else { None };
+    let provider_response = result.provider_response_json();
 
     let campaign = sqlx::query_as::<_, Campaign>(
         "INSERT INTO campaigns
-         (short_code, target_url, phone, country_code, message, template_name, status, sent_by_telegram_id, provider_response, sent_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         (short_code, target_url, phone, country_code, message, template_name, status, sent_by_telegram_id, provider_response, provider_name, sent_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
          RETURNING *"
     )
     .bind(&short_code)
@@ -550,7 +553,8 @@ async fn send_bot_link_campaign(
     .bind(template_name.as_deref())
     .bind(status)
     .bind(telegram_id)
-    .bind(&result.provider_response)
+    .bind(&provider_response)
+    .bind(&result.provider_name)
     .bind(sent_at)
     .fetch_one(&state.pool)
     .await?;
@@ -562,7 +566,7 @@ async fn send_bot_link_campaign(
         } else {
             "SMS gateway rejected the message".to_string()
         },
-        provider_response: Some(result.provider_response),
+        provider_response: Some(provider_response),
         campaign_id: Some(campaign.id),
         short_link: Some(short_link),
     }))
@@ -621,13 +625,14 @@ pub async fn send_campaign(
 
     let status = if result.success { "sent" } else { "failed" };
     let sent_at = if result.success { Some(chrono::Utc::now()) } else { None };
+    let provider_response = result.provider_response_json();
 
     let template_name = template.name.clone();
 
     let campaign = sqlx::query_as::<_, Campaign>(
         "INSERT INTO campaigns
-         (short_code, target_url, phone, country_code, message, template_name, status, sent_by_telegram_id, provider_response, sent_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         (short_code, target_url, phone, country_code, message, template_name, status, sent_by_telegram_id, provider_response, provider_name, sent_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
          RETURNING *"
     )
     .bind(&short_code)
@@ -638,7 +643,8 @@ pub async fn send_campaign(
     .bind(template_name.as_deref())
     .bind(status)
     .bind(payload.telegram_id)
-    .bind(&result.provider_response)
+    .bind(&provider_response)
+    .bind(&result.provider_name)
     .bind(sent_at)
     .fetch_one(&state.pool)
     .await?;
@@ -648,7 +654,7 @@ pub async fn send_campaign(
         campaign_id: campaign.id,
         short_link,
         message,
-        provider_response: Some(result.provider_response),
+        provider_response: Some(provider_response),
     }))
 }
 

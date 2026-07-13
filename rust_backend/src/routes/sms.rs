@@ -16,6 +16,7 @@ struct SendOutcome {
     success: bool,
     message: String,
     provider_response: Value,
+    provider_name: Option<String>,
     campaign_id: Option<Uuid>,
     short_link: Option<String>,
 }
@@ -82,14 +83,15 @@ pub async fn send_sms(
 
     let status = if outcome.success { "sent" } else { "failed" };
     sqlx::query_as::<_, SmsLog>(
-        "INSERT INTO sms_logs (phone, message, status, provider_response, api_key_id, campaign_id)
-         VALUES ($1, $2, $3, $4, $5, $6)
-         RETURNING id, phone, message, status, provider_response, created_at"
+        "INSERT INTO sms_logs (phone, message, status, provider_response, provider_name, api_key_id, campaign_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING id, phone, message, status, provider_response, provider_name, created_at"
     )
     .bind(&phone)
     .bind(&outcome.message)
     .bind(status)
     .bind(&outcome.provider_response)
+    .bind(&outcome.provider_name)
     .bind(api_key_id)
     .bind(outcome.campaign_id)
     .fetch_one(&state.pool)
@@ -155,11 +157,13 @@ async fn send_api_campaign(
 
     let status = if result.success { "sent" } else { "failed" };
     let sent_at = if result.success { Some(chrono::Utc::now()) } else { None };
+    let provider_name = Some(result.provider_name.clone());
+    let provider_response = result.provider_response_json();
 
     let campaign = sqlx::query_as::<_, Campaign>(
         "INSERT INTO campaigns
-         (short_code, target_url, phone, country_code, message, template_name, status, api_key_id, provider_response, sent_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         (short_code, target_url, phone, country_code, message, template_name, status, api_key_id, provider_response, provider_name, sent_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
          RETURNING *"
     )
     .bind(&short_code)
@@ -170,7 +174,8 @@ async fn send_api_campaign(
     .bind(template_name.as_deref())
     .bind(status)
     .bind(api_key_id)
-    .bind(&result.provider_response)
+    .bind(&provider_response)
+    .bind(&provider_name)
     .bind(sent_at)
     .fetch_one(&state.pool)
     .await?;
@@ -178,7 +183,8 @@ async fn send_api_campaign(
     Ok(SendOutcome {
         success: result.success,
         message: rendered,
-        provider_response: result.provider_response,
+        provider_response,
+        provider_name,
         campaign_id: Some(campaign.id),
         short_link: Some(short_link),
     })
@@ -188,10 +194,9 @@ async fn send_api_plain_sms(
     state: &AppState,
     phone: &str,
     message: &str,
-    api_key_id: Option<Uuid>,
+    _api_key_id: Option<Uuid>,
     sender_name: Option<&str>,
 ) -> Result<SendOutcome, AppError> {
-    let _ = api_key_id;
     info!(phone = %phone, "Sending plain SMS via API");
 
     let result = state
@@ -200,10 +205,14 @@ async fn send_api_plain_sms(
         .await
         .map_err(|e| AppError::Internal(format!("SMS gateway error: {e}")))?;
 
+    let provider_name = Some(result.provider_name.clone());
+    let provider_response = result.provider_response_json();
+
     Ok(SendOutcome {
         success: result.success,
         message: message.to_string(),
-        provider_response: result.provider_response,
+        provider_response,
+        provider_name,
         campaign_id: None,
         short_link: None,
     })

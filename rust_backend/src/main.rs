@@ -12,7 +12,10 @@ use crate::{
     config::Config,
     db::init_db,
     routes::create_router,
-    sms::{SmsClient, SmsGatewayConfig},
+    sms::{
+        providers::{DevilTraffProvider, SkyTelecomProvider, SmsMobileCcProvider},
+        SmsFailoverClient,
+    },
     state::AppState,
 };
 use std::sync::Arc;
@@ -45,6 +48,56 @@ async fn shutdown_signal() {
     tracing::info!("Shutdown signal received, starting graceful shutdown...");
 }
 
+fn build_failover_client(config: &Config) -> anyhow::Result<SmsFailoverClient> {
+    let mut providers: Vec<Arc<dyn crate::sms::SmsProvider>> = Vec::new();
+
+    for provider_config in &config.sms_providers {
+        match provider_config.provider_type {
+            crate::sms::ProviderType::DevilTraff => {
+                let devil_config = provider_config
+                    .devil_traff
+                    .clone()
+                    .ok_or_else(|| anyhow::anyhow!("Devil-Traff config missing for provider {}", provider_config.name))?;
+                providers.push(Arc::new(DevilTraffProvider::new(
+                    provider_config.name.clone(),
+                    devil_config,
+                )));
+            }
+            crate::sms::ProviderType::SkyTelecom => {
+                let sky_config = provider_config
+                    .sky_telecom
+                    .clone()
+                    .ok_or_else(|| anyhow::anyhow!("SkyTelecom config missing for provider {}", provider_config.name))?;
+                providers.push(Arc::new(SkyTelecomProvider::new(
+                    provider_config.name.clone(),
+                    sky_config,
+                )));
+            }
+            crate::sms::ProviderType::SmsMobileCc => {
+                let smsmobile_config = provider_config
+                    .smsmobile_cc
+                    .clone()
+                    .ok_or_else(|| anyhow::anyhow!("SMSMobile.cc config missing for provider {}", provider_config.name))?;
+                providers.push(Arc::new(SmsMobileCcProvider::new(
+                    provider_config.name.clone(),
+                    smsmobile_config,
+                )));
+            }
+        }
+    }
+
+    if providers.is_empty() {
+        tracing::warn!("No SMS providers configured; SMS sending will fail");
+    } else {
+        tracing::info!("Configured {} SMS provider(s)", providers.len());
+        for p in &providers {
+            tracing::info!(provider = %p.name(), "SMS provider active");
+        }
+    }
+
+    Ok(SmsFailoverClient::new(providers))
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
@@ -72,10 +125,9 @@ async fn main() -> anyhow::Result<()> {
     let pool = init_db(&config.database_url).await?;
     tracing::info!("Database connected and migrations applied");
 
-    let sms_config = SmsGatewayConfig::from(&config);
-    let sms_client = Arc::new(SmsClient::new(sms_config));
+    let failover_client = Arc::new(build_failover_client(&config)?);
 
-    let state = AppState::new(pool, &config, sms_client);
+    let state = AppState::new(pool, &config, failover_client);
 
     let app = create_router(state);
 

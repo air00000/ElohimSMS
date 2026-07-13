@@ -1,3 +1,4 @@
+use crate::sms::{load_provider_configs_from_env, SmsProviderConfig};
 use std::net::SocketAddr;
 
 #[derive(Debug, Clone)]
@@ -7,10 +8,7 @@ pub struct Config {
     pub api_key: Option<String>,
     pub internal_bot_token: String,
     pub bot_internal_url: String,
-    pub sms_gateway_url: String,
-    pub sms_gateway_auth_token: String,
-    pub sms_gateway_route: String,
-    pub sms_gateway_sender_id: String,
+    pub sms_providers: Vec<SmsProviderConfig>,
 }
 
 impl Config {
@@ -37,19 +35,7 @@ impl Config {
             .trim_end_matches('/')
             .to_string();
 
-        let sms_gateway_url = std::env::var("SMS_GATEWAY_URL")
-            .unwrap_or_else(|_| "https://api.devil-traff.cc".to_string())
-            .trim_end_matches('/')
-            .to_string();
-
-        let sms_gateway_auth_token = std::env::var("SMS_GATEWAY_AUTH_TOKEN")
-            .map_err(|_| anyhow::anyhow!("SMS_GATEWAY_AUTH_TOKEN must be set"))?;
-
-        let sms_gateway_route = std::env::var("SMS_GATEWAY_ROUTE")
-            .unwrap_or_else(|_| "Auto".to_string());
-
-        let sms_gateway_sender_id = std::env::var("SMS_GATEWAY_SENDER_ID")
-            .unwrap_or_else(|_| "ElohimSMS".to_string());
+        let sms_providers = load_provider_configs_from_env();
 
         Ok(Self {
             database_url,
@@ -57,10 +43,7 @@ impl Config {
             api_key,
             internal_bot_token,
             bot_internal_url,
-            sms_gateway_url,
-            sms_gateway_auth_token,
-            sms_gateway_route,
-            sms_gateway_sender_id,
+            sms_providers,
         })
     }
 }

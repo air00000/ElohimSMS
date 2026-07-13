@@ -11,6 +11,7 @@ pub struct SmsLog {
     pub message: String,
     pub status: String,
     pub provider_response: Option<serde_json::Value>,
+    pub provider_name: Option<String>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -119,6 +120,7 @@ pub struct Campaign {
     pub sent_by_telegram_id: Option<i64>,
     pub api_key_id: Option<Uuid>,
     pub provider_response: Option<serde_json::Value>,
+    pub provider_name: Option<String>,
     pub sent_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
 }

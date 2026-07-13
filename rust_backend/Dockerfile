@@ -1,9 +1,10 @@
-FROM rust:1.79-slim-bookworm AS builder
+FROM rust:1.88-slim-bookworm AS builder
 
 WORKDIR /app
 
-# Установка зависимостей для сборки
-RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
+# Установка зависимостей для сборки.
+# curl нужен для utoipa-swagger-ui, чтобы скачать Swagger UI во время компиляции.
+RUN apt-get update && apt-get install -y pkg-config libssl-dev curl && rm -rf /var/lib/apt/lists/*
 
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src

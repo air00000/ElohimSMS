@@ -1,11 +1,11 @@
-use crate::{config::Config, sms::SmsClient};
+use crate::{config::Config, sms::SmsFailoverClient};
 use sqlx::PgPool;
 use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct AppState {
     pub pool: PgPool,
-    pub sms_client: Arc<SmsClient>,
+    pub sms_client: Arc<SmsFailoverClient>,
     pub api_key: Option<String>,
     pub internal_bot_token: String,
     pub bot_internal_url: String,
@@ -13,7 +13,7 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(pool: PgPool, config: &Config, sms_client: Arc<SmsClient>) -> Self {
+    pub fn new(pool: PgPool, config: &Config, sms_client: Arc<SmsFailoverClient>) -> Self {
         Self {
             pool,
             sms_client,
