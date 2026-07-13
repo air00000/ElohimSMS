@@ -147,31 +147,35 @@ pub async fn verify_link(
         admin_telegram_id = get_owner_telegram_id(&state.pool).await?;
     }
 
+    tracing::info!(
+        short_code = %short_code,
+        campaign_id = %campaign.id,
+        admin_telegram_id = ?admin_telegram_id,
+        "Resolved admin for click notification"
+    );
+
     // Фиксируем переход.
+    // click_count = 1 после инкремента означает, что до этого переходов не было.
     let is_first_click = sqlx::query_scalar::<_, bool>(
         r#"
-        WITH locked AS (
-            SELECT id, first_clicked_at
-            FROM campaigns
-            WHERE id = $1
-            FOR UPDATE
-        ),
-        updated AS (
-            UPDATE campaigns AS campaign
-            SET
-                click_count = campaign.click_count + 1,
-                first_clicked_at = COALESCE(campaign.first_clicked_at, NOW())
-            FROM locked
-            WHERE campaign.id = locked.id
-            RETURNING locked.first_clicked_at IS NULL AS is_first_click
-        )
-        SELECT is_first_click
-        FROM updated
+        UPDATE campaigns
+        SET
+            click_count = click_count + 1,
+            first_clicked_at = COALESCE(first_clicked_at, NOW())
+        WHERE id = $1
+        RETURNING click_count = 1 AS is_first_click
         "#,
     )
     .bind(campaign.id)
     .fetch_one(&state.pool)
     .await?;
+
+    tracing::info!(
+        short_code = %short_code,
+        campaign_id = %campaign.id,
+        is_first_click,
+        "Click counter updated"
+    );
 
     sqlx::query("INSERT INTO campaign_clicks (campaign_id) VALUES ($1)")
         .bind(campaign.id)
