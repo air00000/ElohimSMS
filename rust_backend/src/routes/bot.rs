@@ -70,6 +70,12 @@ pub(crate) fn notify_admin(state: &AppState, telegram_id: i64, text: String) {
     let url = format!("{}/internal/notify", state.bot_internal_url);
     let token = state.internal_bot_token.clone();
 
+    tracing::info!(
+        telegram_id,
+        url = %url,
+        "notify_admin called, spawning notification task"
+    );
+
     tokio::spawn(async move {
         let payload = json!({
             "telegram_id": telegram_id,

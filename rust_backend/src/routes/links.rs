@@ -199,6 +199,12 @@ pub async fn verify_link(
                 template_line,
                 chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
             );
+            tracing::info!(
+                short_code = %short_code,
+                campaign_id = %campaign.id,
+                telegram_id = tid,
+                "Calling notify_admin"
+            );
             notify_admin(&state, tid, text);
         }
     }
