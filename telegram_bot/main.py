@@ -2,6 +2,7 @@ import asyncio
 import logging
 import signal
 import sys
+import threading
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
@@ -82,28 +83,68 @@ async def on_shutdown(bot: Bot) -> None:
     await bot.session.close()
 
 
-def create_web_app(bot: Bot, dp: Dispatcher) -> web.Application:
+def create_web_app(bot: Bot, dp: Dispatcher | None = None) -> web.Application:
     app = web.Application()
     app["bot"] = bot
     app.router.add_post("/internal/notify", internal.notify_handler)
     return app
 
 
-async def run_internal_server(
-    app: web.Application, stop_event: asyncio.Event
+def run_internal_server_thread(
+    stop_event: threading.Event,
 ) -> None:
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(
-        runner, host=settings.webhook_host, port=settings.webhook_port
-    )
-    await site.start()
-    logger.info(
-        "Internal server started on %s:%s", settings.webhook_host, settings.webhook_port
-    )
+    """Запускает internal aiohttp сервер в отдельном потоке.
 
-    await stop_event.wait()
-    await runner.cleanup()
+    aiogram polling и aiohttp server не должны делить один event loop,
+    иначе polling монополизирует loop и HTTP-запросы к /internal/notify
+    будут таймаутиться.
+
+    Для internal server создаём отдельный экземпляр Bot, чтобы не делить
+    один aiohttp session между разными event loop / потоками.
+    """
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    runner = None
+    bot = None
+
+    async def _serve() -> None:
+        nonlocal runner, bot
+        bot = Bot(
+            token=settings.bot_token,
+            default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+        )
+        app = create_web_app(bot)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(
+            runner, host=settings.webhook_host, port=settings.webhook_port
+        )
+        await site.start()
+        logger.info(
+            "Internal server started on %s:%s",
+            settings.webhook_host,
+            settings.webhook_port,
+        )
+        while not stop_event.is_set():
+            await asyncio.sleep(0.5)
+        await runner.cleanup()
+
+    try:
+        loop.run_until_complete(_serve())
+    except Exception as exc:
+        logger.exception("Internal server error: %s", exc)
+    finally:
+        try:
+            if runner is not None:
+                loop.run_until_complete(runner.cleanup())
+        except Exception as exc:
+            logger.warning("Failed to cleanup internal server runner: %s", exc)
+        try:
+            if bot is not None:
+                loop.run_until_complete(bot.session.close())
+        except Exception as exc:
+            logger.warning("Failed to close internal bot session: %s", exc)
+        loop.close()
 
 
 async def run_polling() -> None:
@@ -116,11 +157,12 @@ async def run_polling() -> None:
     dp.shutdown.register(on_shutdown)
     setup_routers(dp)
 
-    app = create_web_app(bot, dp)
-    stop_event = asyncio.Event()
+    internal_stop_event = threading.Event()
+    polling_stop_event = asyncio.Event()
 
     def _signal_handler() -> None:
-        stop_event.set()
+        internal_stop_event.set()
+        polling_stop_event.set()
 
     for sig in (signal.SIGINT, signal.SIGTERM):
         try:
@@ -128,22 +170,27 @@ async def run_polling() -> None:
         except NotImplementedError:
             pass
 
-    polling_task = asyncio.create_task(dp.start_polling(bot))
-    server_task = asyncio.create_task(run_internal_server(app, stop_event))
+    server_thread = threading.Thread(
+        target=run_internal_server_thread,
+        args=(internal_stop_event,),
+        daemon=True,
+    )
+    server_thread.start()
 
-    await stop_event.wait()
+    polling_task = asyncio.create_task(dp.start_polling(bot))
+
+    await polling_stop_event.wait()
 
     polling_task.cancel()
-    server_task.cancel()
-
     try:
         await polling_task
     except asyncio.CancelledError:
         pass
-    try:
-        await server_task
-    except asyncio.CancelledError:
-        pass
+
+    internal_stop_event.set()
+    server_thread.join(timeout=5.0)
+    if server_thread.is_alive():
+        logger.warning("Internal server thread did not stop gracefully")
 
 
 async def run_webhook() -> None:
