@@ -7,6 +7,7 @@ pub mod webhooks;
 
 use crate::{openapi::ApiDoc, state::AppState};
 use axum::{
+    http,
     middleware,
     routing::{delete, get, post, put},
     Router,
@@ -15,6 +16,7 @@ use std::sync::Arc;
 use tower_governor::{
     governor::GovernorConfigBuilder, key_extractor::GlobalKeyExtractor, GovernorLayer,
 };
+use tower_http::cors::{Any, CorsLayer};
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
@@ -23,7 +25,13 @@ pub fn create_router(state: AppState) -> Router {
         .route("/health", get(health::health))
         .route("/r/:short_code", get(bot::redirect))
         .route("/api/v1/links/:short_code", get(links::check_link))
-        .route("/api/v1/links/:short_code/verify", post(links::verify_link));
+        .route("/api/v1/links/:short_code/verify", post(links::verify_link))
+        .layer(
+            CorsLayer::new()
+                .allow_origin(Any)
+                .allow_methods([http::Method::GET, http::Method::POST])
+                .allow_headers(Any),
+        );
 
     let governor_conf = Arc::new(
         GovernorConfigBuilder::default()

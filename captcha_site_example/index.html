@@ -44,7 +44,10 @@
 
     <script>
         // Конфигурация
-        const BACKEND_URL = 'https://linkre.info';
+        // По умолчанию используем текущий origin (фронтенд и бэкенд на одном домене).
+        // Если бэкенд находится на другом адресе, укажите его явно, например:
+        // const BACKEND_URL = 'https://api.example.com';
+        const BACKEND_URL = '';
         const RECAPTCHA_SITE_KEY = '6LfDoUgtAAAAAN5xibYYHlrZvVuQ5B3vqNt0f8wI';
 
         // Получаем short_code из URL /l/{short_code}
