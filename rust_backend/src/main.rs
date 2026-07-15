@@ -13,7 +13,7 @@ use crate::{
     db::init_db,
     routes::create_router,
     sms::{
-        providers::{DevilTraffProvider, SkyTelecomProvider, SmsMobileCcProvider},
+        providers::{DevilTraffProvider, LimitlessTxtProvider, SkyTelecomProvider, SmsMobileCcProvider},
         SmsFailoverClient,
     },
     state::AppState,
@@ -81,6 +81,16 @@ fn build_failover_client(config: &Config) -> anyhow::Result<SmsFailoverClient> {
                 providers.push(Arc::new(SmsMobileCcProvider::new(
                     provider_config.name.clone(),
                     smsmobile_config,
+                )));
+            }
+            crate::sms::ProviderType::LimitlessTxt => {
+                let limitless_config = provider_config
+                    .limitless_txt
+                    .clone()
+                    .ok_or_else(|| anyhow::anyhow!("LimitlessTXT config missing for provider {}", provider_config.name))?;
+                providers.push(Arc::new(LimitlessTxtProvider::new(
+                    provider_config.name.clone(),
+                    limitless_config,
                 )));
             }
         }

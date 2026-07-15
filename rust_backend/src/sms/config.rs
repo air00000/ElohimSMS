@@ -1,9 +1,10 @@
-use crate::sms::providers::{DevilTraffConfig, SkyTelecomConfig, SmsMobileCcConfig};
+use crate::sms::providers::{DevilTraffConfig, LimitlessTxtConfig, SkyTelecomConfig, SmsMobileCcConfig};
 
 /// Тип провайдера, определяющий реализацию.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProviderType {
     DevilTraff,
+    LimitlessTxt,
     SkyTelecom,
     SmsMobileCc,
 }
@@ -12,6 +13,7 @@ impl ProviderType {
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_ascii_lowercase().as_str() {
             "devil-traff" | "devil_traff" => Some(ProviderType::DevilTraff),
+            "limitlesstxt" | "limitless-txt" | "limitless_txt" => Some(ProviderType::LimitlessTxt),
             "skytelecom" | "sky-telecom" | "sky_telecom" => Some(ProviderType::SkyTelecom),
             "smsmobile" | "smsmobilecc" | "smsmobile-cc" | "sms_mobile" | "sms_mobile_cc" => {
                 Some(ProviderType::SmsMobileCc)
@@ -28,6 +30,7 @@ pub struct SmsProviderConfig {
     pub provider_type: ProviderType,
     pub priority: i32,
     pub devil_traff: Option<DevilTraffConfig>,
+    pub limitless_txt: Option<LimitlessTxtConfig>,
     pub sky_telecom: Option<SkyTelecomConfig>,
     pub smsmobile_cc: Option<SmsMobileCcConfig>,
 }
@@ -51,6 +54,31 @@ impl SmsProviderConfig {
                 route: route.into(),
                 sender_id: sender_id.into(),
             }),
+            limitless_txt: None,
+            sky_telecom: None,
+            smsmobile_cc: None,
+        }
+    }
+
+    pub fn new_limitless_txt(
+        name: impl Into<String>,
+        priority: i32,
+        base_url: impl Into<String>,
+        api_key: impl Into<String>,
+        sender_id: impl Into<String>,
+        route: Option<u32>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            provider_type: ProviderType::LimitlessTxt,
+            priority,
+            devil_traff: None,
+            limitless_txt: Some(LimitlessTxtConfig {
+                base_url: base_url.into(),
+                api_key: api_key.into(),
+                sender_id: sender_id.into(),
+                route,
+            }),
             sky_telecom: None,
             smsmobile_cc: None,
         }
@@ -67,6 +95,7 @@ impl SmsProviderConfig {
             provider_type: ProviderType::SkyTelecom,
             priority,
             devil_traff: None,
+            limitless_txt: None,
             sky_telecom: Some(SkyTelecomConfig {
                 base_url: base_url.into(),
                 api_key: api_key.into(),
@@ -97,6 +126,7 @@ impl SmsProviderConfig {
                 route_id,
                 sender_id: sender_id.into(),
             }),
+            limitless_txt: None,
         }
     }
 }
@@ -138,6 +168,20 @@ pub fn load_provider_configs_from_env() -> Vec<SmsProviderConfig> {
             .unwrap_or(idx as i32 * 10);
 
         match _provider_type {
+            ProviderType::LimitlessTxt => {
+                let api_key = std::env::var(format!("{}API_KEY", prefix))
+                    .ok()
+                    .unwrap_or_default();
+                let sender_id = std::env::var(format!("{}SENDER_ID", prefix))
+                    .ok()
+                    .unwrap_or_else(|| "ElohimSMS".to_string());
+                let route = std::env::var(format!("{}ROUTE", prefix))
+                    .ok()
+                    .and_then(|s| s.parse().ok());
+                configs.push(SmsProviderConfig::new_limitless_txt(
+                    name, priority, base_url, api_key, sender_id, route,
+                ));
+            }
             ProviderType::SkyTelecom => {
                 let api_key = std::env::var(format!("{}API_KEY", prefix))
                     .ok()
