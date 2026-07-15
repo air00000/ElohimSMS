@@ -8,13 +8,27 @@ from config import settings
 
 
 class BackendAPI:
-    def __init__(self):
+    def __init__(self) -> None:
         self.base_url = settings.api_base_url.rstrip("/")
         self.headers = {
             "X-Internal-Bot-Token": settings.internal_bot_token,
             "Content-Type": "application/json",
         }
         self.timeout = aiohttp.ClientTimeout(total=30)
+        self._session: aiohttp.ClientSession | None = None
+
+    @property
+    def session(self) -> aiohttp.ClientSession:
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession(
+                headers=self.headers,
+                timeout=self.timeout,
+            )
+        return self._session
+
+    async def close(self) -> None:
+        if self._session is not None and not self._session.closed:
+            await self._session.close()
 
     async def request(
         self,
@@ -30,34 +44,31 @@ class BackendAPI:
 
         for attempt in range(retries):
             try:
-                async with aiohttp.ClientSession(timeout=self.timeout) as session:
-                    async with session.request(
-                        method, url, headers=self.headers, json=json, params=params
-                    ) as response:
-                        if response.status == 204:
-                            return {}
+                async with self.session.request(
+                    method, url, json=json, params=params
+                ) as response:
+                    if response.status == 204:
+                        return {}
 
-                        data = await response.json()
-                        if not response.ok:
-                            if isinstance(data, dict):
-                                error_msg = data.get("error", data)
-                            else:
-                                error_msg = data
-                            raise ClientResponseError(
-                                response.request_info,
-                                response.history,
-                                status=response.status,
-                                message=str(error_msg),
-                            )
-                        return data or {}
+                    data = await response.json()
+                    if not response.ok:
+                        error_message = (
+                            data.get("error", data) if isinstance(data, dict) else data
+                        )
+                        raise ClientResponseError(
+                            response.request_info,
+                            response.history,
+                            status=response.status,
+                            message=str(error_message),
+                        )
+                    return data or {}
             except ClientResponseError:
                 # HTTP-ошибки (4xx/5xx) не ретраим.
                 raise
             except (ClientConnectorError, TimeoutError, asyncio.TimeoutError) as e:
                 last_error = e
                 if attempt < retries - 1:
-                    wait = backoff * (2**attempt)
-                    await asyncio.sleep(wait)
+                    await asyncio.sleep(backoff * (2**attempt))
                 continue
 
         raise RuntimeError(f"API request failed after {retries} attempts: {last_error}")

@@ -80,6 +80,7 @@ async def on_startup(bot: Bot) -> None:
 
 async def on_shutdown(bot: Bot) -> None:
     logger.info("Shutting down ElohimSMS Telegram bot")
+    await api.close()
     await bot.session.close()
 
 
