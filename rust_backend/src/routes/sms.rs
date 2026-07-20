@@ -23,11 +23,13 @@ struct SendOutcome {
 
 /// Отправить SMS со ссылкой
 ///
-/// Отправляет SMS на указанный номер.
+/// Отправляет SMS на указанный номер. Текст сообщения — избранный шаблон
+/// для страны получателя (страна определяется по номеру): ссылка из поля
+/// `message` оборачивается в короткую и подставляется в текст шаблона.
+/// Имя отправителя — избранное имя отправителя для этой страны.
 ///
-/// Если для страны получателя настроен активный шаблон, ссылка из поля `message`
-/// оборачивается в короткую ссылку и подставляется в текст шаблона — в ответе
-/// вернутся `campaign_id` и `short_link`. Иначе SMS отправляется как есть.
+/// Если для страны не настроен избранный шаблон или избранное имя
+/// отправителя, SMS не отправляется — возвращается ошибка 400.
 ///
 /// При переходе получателя по ссылке на ваш webhook отправляется событие
 /// `campaign.link_verified` (см. `PUT /api/v1/webhook`).
@@ -38,7 +40,7 @@ struct SendOutcome {
     request_body = SendSmsRequest,
     responses(
         (status = 200, description = "SMS принята в обработку", body = SendSmsResponse),
-        (status = 400, description = "Некорректный запрос (невалидный номер или пустое сообщение)"),
+        (status = 400, description = "Некорректный запрос (невалидный номер, пустое сообщение) или для страны не настроен шаблон/имя отправителя"),
         (status = 401, description = "Отсутствует или невалиден API-ключ"),
         (status = 429, description = "Превышен лимит запросов")
     ),
@@ -59,12 +61,7 @@ pub async fn send_sms(
         return Err(AppError::BadRequest("Message is required".to_string()));
     }
 
-    let (api_key_id, _sender_name) = resolve_key_owner(&state, &headers).await?;
-    let sender_id = payload
-        .sender_id
-        .as_deref()
-        .filter(|s| !s.is_empty())
-        .unwrap_or("TRACKING");
+    let api_key_id = resolve_key_owner(&state, &headers).await?;
     let country_code = detect_country_code(&phone)?;
 
     let template = sqlx::query_as::<_, Template>(
@@ -72,30 +69,36 @@ pub async fn send_sms(
     )
     .bind(&country_code)
     .fetch_optional(&state.pool)
-    .await?;
+    .await?
+    .ok_or_else(|| {
+        AppError::BadRequest(format!(
+            "No favorite template configured for country {country_code}"
+        ))
+    })?;
 
-    let outcome = if let Some(template) = template {
-        send_api_campaign(
-            &state,
-            &phone,
-            target_url,
-            &country_code,
-            &template,
-            api_key_id,
-            payload.external_id.as_deref(),
-            sender_id,
-        )
-        .await?
-    } else {
-        send_api_plain_sms(
-            &state,
-            &phone,
-            target_url,
-            api_key_id,
-            sender_id,
-        )
-        .await?
-    };
+    let sender_name = sqlx::query_scalar::<_, String>(
+        "SELECT name FROM sender_names WHERE country_code = $1 AND is_active = TRUE AND is_favorite = TRUE LIMIT 1",
+    )
+    .bind(&country_code)
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or_else(|| {
+        AppError::BadRequest(format!(
+            "No sender name configured for country {country_code}"
+        ))
+    })?;
+
+    let outcome = send_api_campaign(
+        &state,
+        &phone,
+        target_url,
+        &country_code,
+        &template,
+        api_key_id,
+        payload.external_id.as_deref(),
+        &sender_name,
+    )
+    .await?;
 
     let status = if outcome.success { "sent" } else { "failed" };
     sqlx::query_as::<_, SmsLog>(
@@ -190,70 +193,29 @@ async fn send_api_campaign(
     })
 }
 
-async fn send_api_plain_sms(
-    state: &AppState,
-    phone: &str,
-    message: &str,
-    _api_key_id: Option<Uuid>,
-    sender_id: &str,
-) -> Result<SendOutcome, AppError> {
-    info!(phone = %phone, "Sending plain SMS via API");
-
-    let result = state
-        .sms_client
-        .send_sms(phone, message, Some(sender_id))
-        .await
-        .map_err(|e| AppError::Internal(format!("SMS gateway error: {e}")))?;
-
-    let provider_name = Some(result.provider_name.clone());
-    let provider_response = result.provider_response_json();
-
-    Ok(SendOutcome {
-        success: result.success,
-        message: message.to_string(),
-        provider_response,
-        provider_name,
-        campaign_id: None,
-        short_link: None,
-    })
-}
-
 async fn resolve_key_owner(
     state: &AppState,
     headers: &HeaderMap,
-) -> Result<(Option<Uuid>, Option<String>), AppError> {
+) -> Result<Option<Uuid>, AppError> {
     let key = headers
         .get("X-API-Key")
         .and_then(|v| v.to_str().ok())
         .ok_or(AppError::Unauthorized)?;
 
     if state.api_key.as_deref() == Some(key) {
-        return Ok((None, None));
+        return Ok(None);
     }
 
     let key_hash = hash_api_key(key);
-    let row = sqlx::query_as::<_, (Uuid, Option<i64>)>(
-        "SELECT id, created_by_telegram_id FROM api_keys WHERE key_hash = $1 AND is_active = TRUE"
+    let id = sqlx::query_scalar::<_, Uuid>(
+        "SELECT id FROM api_keys WHERE key_hash = $1 AND is_active = TRUE",
     )
     .bind(&key_hash)
     .fetch_optional(&state.pool)
-    .await?;
+    .await?
+    .ok_or(AppError::Unauthorized)?;
 
-    let (id, owner_tid) = row.ok_or(AppError::Unauthorized)?;
-
-    let sender_name = if let Some(tid) = owner_tid {
-        sqlx::query_scalar::<_, Option<String>>(
-            "SELECT sender_name FROM admins WHERE telegram_id = $1"
-        )
-        .bind(tid)
-        .fetch_optional(&state.pool)
-        .await?
-        .flatten()
-    } else {
-        None
-    };
-
-    Ok((Some(id), sender_name))
+    Ok(Some(id))
 }
 
 async fn generate_short_code(state: &AppState) -> Result<String, AppError> {

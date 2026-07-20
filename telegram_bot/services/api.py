@@ -155,6 +155,32 @@ class BackendAPI:
             "POST", f"/bot/v1/templates/{template_id}/favorite"
         )
 
+    # ---------- Имена отправителя ----------
+
+    async def list_sender_names(self) -> list[dict[str, Any]]:
+        result = await self.request("GET", "/bot/v1/sender-names")
+        return result.get("data", []) if isinstance(result, dict) else result
+
+    async def create_sender_name(
+        self, country_code: str, name: str
+    ) -> dict[str, Any]:
+        return await self.request(
+            "POST",
+            "/bot/v1/sender-names",
+            json={
+                "country_code": country_code,
+                "name": name,
+            },
+        )
+
+    async def delete_sender_name(self, sender_name_id: str) -> None:
+        await self.request("DELETE", f"/bot/v1/sender-names/{sender_name_id}")
+
+    async def set_favorite_sender_name(self, sender_name_id: str) -> dict[str, Any]:
+        return await self.request(
+            "POST", f"/bot/v1/sender-names/{sender_name_id}/favorite"
+        )
+
     # ---------- SMS ----------
 
     async def send_sms(

@@ -21,6 +21,7 @@ BTN_STATS = "📊 Статистика"
 BTN_ADMINS = "👥 Администраторы"
 BTN_KEYS = "🔑 API-ключи"
 BTN_TEMPLATES = "📝 Шаблоны"
+BTN_SENDER_NAMES = "📛 Имена отправителя"
 BTN_SEND_SMS = "📤 Отправить SMS"
 BTN_SETTINGS = "⚙️ Настройки"
 BTN_HELP = "❓ Помощь"
@@ -32,6 +33,7 @@ def main_menu_keyboard(is_owner: bool = False) -> ReplyKeyboardMarkup:
     buttons = [
         [KeyboardButton(text=BTN_STATS)],
         [KeyboardButton(text=BTN_KEYS), KeyboardButton(text=BTN_TEMPLATES)],
+        [KeyboardButton(text=BTN_SENDER_NAMES)],
         [KeyboardButton(text=BTN_SEND_SMS)],
         [KeyboardButton(text=BTN_SETTINGS), KeyboardButton(text=BTN_HELP)],
     ]

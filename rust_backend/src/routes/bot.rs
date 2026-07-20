@@ -2,8 +2,9 @@ use crate::{
     error::AppError,
     models::{
         Admin, ApiKey, ApiKeyListItem, BotSendSmsRequest, Campaign, CreateAdminRequest,
-        CreateKeyRequest, CreateKeyResponse, CreateTemplateRequest, EnsureOwnerRequest,
-        SendSmsResponse, StatsResponse, Template, UpdateSenderNameRequest,
+        CreateKeyRequest, CreateKeyResponse, CreateSenderNameRequest, CreateTemplateRequest,
+        EnsureOwnerRequest, SenderName, SendSmsResponse, StatsResponse, Template,
+        UpdateSenderNameRequest,
     },
     phone::{detect_country_code, normalize_phone},
     routes::auth::hash_api_key,
@@ -497,6 +498,126 @@ pub async fn set_favorite_template(
 
     let updated = sqlx::query_as::<_, Template>(
         "UPDATE templates SET is_favorite = TRUE, updated_at = NOW() WHERE id = $1 RETURNING *",
+    )
+    .bind(id)
+    .fetch_one(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+    Ok(Json(updated))
+}
+
+// ---------- Имена отправителя ----------
+
+#[utoipa::path(
+    get,
+    path = "/bot/v1/sender-names",
+    responses((status = 200, description = "List sender names", body = Vec<SenderName>))
+)]
+pub async fn list_sender_names(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<SenderName>>, AppError> {
+    let names = sqlx::query_as::<_, SenderName>(
+        "SELECT * FROM sender_names ORDER BY country_code, created_at",
+    )
+    .fetch_all(&state.pool)
+    .await?;
+    Ok(Json(names))
+}
+
+#[utoipa::path(
+    post,
+    path = "/bot/v1/sender-names",
+    request_body = CreateSenderNameRequest,
+    responses((status = 200, description = "Sender name created", body = SenderName))
+)]
+pub async fn create_sender_name(
+    State(state): State<AppState>,
+    Json(payload): Json<CreateSenderNameRequest>,
+) -> Result<Json<SenderName>, AppError> {
+    let country_code = payload.country_code.trim().to_uppercase();
+    if country_code.len() != 2 {
+        return Err(AppError::BadRequest(
+            "Country code must be 2 letters".to_string(),
+        ));
+    }
+
+    let name = payload.name.trim();
+    if name.is_empty() {
+        return Err(AppError::BadRequest("Sender name is required".to_string()));
+    }
+    if name.len() > 11 || !name.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return Err(AppError::BadRequest(
+            "Sender name must be up to 11 latin letters/digits".to_string(),
+        ));
+    }
+
+    let has_favorite = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM sender_names WHERE country_code = $1 AND is_favorite = TRUE)"
+    )
+    .bind(&country_code)
+    .fetch_one(&state.pool)
+    .await?;
+
+    let sender_name = sqlx::query_as::<_, SenderName>(
+        "INSERT INTO sender_names (country_code, name, is_favorite)
+         VALUES ($1, $2, $3)
+         RETURNING *",
+    )
+    .bind(&country_code)
+    .bind(name.to_string())
+    .bind(!has_favorite)
+    .fetch_one(&state.pool)
+    .await?;
+
+    Ok(Json(sender_name))
+}
+
+#[utoipa::path(
+    delete,
+    path = "/bot/v1/sender-names/{id}",
+    responses((status = 204, description = "Sender name deleted"))
+)]
+pub async fn delete_sender_name(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<(), AppError> {
+    let result = sqlx::query("DELETE FROM sender_names WHERE id = $1")
+        .bind(id)
+        .execute(&state.pool)
+        .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(AppError::NotFound);
+    }
+
+    Ok(())
+}
+
+#[utoipa::path(
+    post,
+    path = "/bot/v1/sender-names/{id}/favorite",
+    responses((status = 200, description = "Favorite set", body = SenderName))
+)]
+pub async fn set_favorite_sender_name(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<SenderName>, AppError> {
+    let sender_name = sqlx::query_as::<_, SenderName>("SELECT * FROM sender_names WHERE id = $1")
+        .bind(id)
+        .fetch_optional(&state.pool)
+        .await?
+        .ok_or(AppError::NotFound)?;
+
+    let mut tx = state.pool.begin().await?;
+
+    sqlx::query("UPDATE sender_names SET is_favorite = FALSE WHERE country_code = $1")
+        .bind(&sender_name.country_code)
+        .execute(&mut *tx)
+        .await?;
+
+    let updated = sqlx::query_as::<_, SenderName>(
+        "UPDATE sender_names SET is_favorite = TRUE, updated_at = NOW() WHERE id = $1 RETURNING *",
     )
     .bind(id)
     .fetch_one(&mut *tx)

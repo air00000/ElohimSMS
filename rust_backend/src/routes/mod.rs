@@ -63,6 +63,15 @@ pub fn create_router(state: AppState) -> Router {
         .route("/templates", get(bot::list_templates).post(bot::create_template))
         .route("/templates/:id", delete(bot::delete_template))
         .route("/templates/:id/favorite", post(bot::set_favorite_template))
+        .route(
+            "/sender-names",
+            get(bot::list_sender_names).post(bot::create_sender_name),
+        )
+        .route("/sender-names/:id", delete(bot::delete_sender_name))
+        .route(
+            "/sender-names/:id/favorite",
+            post(bot::set_favorite_sender_name),
+        )
         .route("/sms/send", post(bot::bot_send_sms))
         .route("/stats", get(bot::stats))
         .layer(middleware::from_fn_with_state(

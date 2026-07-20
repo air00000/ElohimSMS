@@ -21,13 +21,14 @@ pub struct SendSmsRequest {
     #[schema(example = "+79991234567")]
     pub phone: String,
 
-    /// Целевая ссылка. Если для страны получателя есть активный шаблон,
-    /// ссылка будет обёрнута в короткую и подставлена в текст шаблона.
-    /// Иначе значение отправляется как текст SMS.
+    /// Целевая ссылка. Оборачивается в короткую ссылку и подставляется
+    /// в текст избранного шаблона страны получателя.
+    /// Если для страны не настроен избранный шаблон — возвращается ошибка 400.
     #[schema(example = "https://example.com/landing")]
     pub message: String,
 
-    /// Альфавитное имя отправителя (sender ID). По умолчанию — `TRACKING`.
+    /// Deprecated: игнорируется. Имя отправителя выбирается автоматически —
+    /// избранное имя отправителя для страны получателя.
     #[schema(example = "MYBRAND")]
     pub sender_id: Option<String>,
 
@@ -142,6 +143,23 @@ pub struct CreateTemplateRequest {
     pub country_code: String,
     pub name: String,
     pub text: String,
+}
+
+#[derive(Debug, Serialize, FromRow, ToSchema)]
+pub struct SenderName {
+    pub id: Uuid,
+    pub country_code: String,
+    pub name: String,
+    pub is_active: bool,
+    pub is_favorite: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct CreateSenderNameRequest {
+    pub country_code: String,
+    pub name: String,
 }
 
 #[derive(Debug, Serialize, FromRow, ToSchema)]
