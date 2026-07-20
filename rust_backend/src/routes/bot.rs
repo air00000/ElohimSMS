@@ -102,6 +102,90 @@ pub(crate) fn notify_admin(state: &AppState, telegram_id: i64, text: String) {
 
 // ---------- Администраторы ----------
 
+/// Уведомляет владельца сервиса о первом переходе по кампании с указанием клиента.
+///
+/// `already_notified` — telegram_id, которому уже отправлено обычное уведомление;
+/// если владелец совпадает с ним, повторное сообщение не шлём.
+/// Возвращает telegram_id владельца, если он задан.
+pub(crate) async fn notify_owner_first_click(
+    state: &AppState,
+    campaign_id: Uuid,
+    phone: &str,
+    country_code: &str,
+    message: &str,
+    template_name: Option<&str>,
+    sent_by_telegram_id: Option<i64>,
+    api_key_id: Option<Uuid>,
+    already_notified: Option<i64>,
+) -> Option<i64> {
+    let owner_id = match get_owner_telegram_id(&state.pool).await {
+        Ok(id) => id,
+        Err(e) => {
+            tracing::warn!(error = %e, "Failed to resolve service owner for click notification");
+            None
+        }
+    }?;
+
+    if already_notified == Some(owner_id) {
+        return Some(owner_id);
+    }
+
+    let client_line = if let Some(tid) = sent_by_telegram_id {
+        let username = sqlx::query_scalar::<_, Option<String>>(
+            "SELECT username FROM admins WHERE telegram_id = $1",
+        )
+        .bind(tid)
+        .fetch_optional(&state.pool)
+        .await
+        .ok()
+        .flatten()
+        .flatten();
+        match username {
+            Some(u) if !u.is_empty() => format!("Telegram: @{} (id {})", u, tid),
+            _ => format!("Telegram: id {}", tid),
+        }
+    } else if let Some(key_id) = api_key_id {
+        let name = sqlx::query_scalar::<_, String>("SELECT name FROM api_keys WHERE id = $1")
+            .bind(key_id)
+            .fetch_optional(&state.pool)
+            .await
+            .ok()
+            .flatten();
+        match name {
+            Some(n) => format!("API-ключ: «{}»", n),
+            None => "API-ключ: не найден".to_string(),
+        }
+    } else {
+        "неизвестен".to_string()
+    };
+
+    let template_line = if let Some(name) = template_name {
+        format!("\n<b>Шаблон:</b> {}", name)
+    } else {
+        String::new()
+    };
+
+    let text = format!(
+        "👑 <b>Переход у клиента</b>\n\n<b>Клиент:</b> {}\n<b>Кампания:</b> <code>{}</code>\n<b>Номер:</b> <code>{}</code>\n<b>Страна:</b> {}\n<b>Сообщение:</b> <code>{}</code>{}\n<b>Время:</b> {}",
+        client_line,
+        campaign_id,
+        phone,
+        country_code,
+        message,
+        template_line,
+        chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
+    );
+
+    tracing::info!(
+        telegram_id = owner_id,
+        campaign_id = %campaign_id,
+        "Notifying service owner about client click"
+    );
+    notify_admin(state, owner_id, text);
+
+    Some(owner_id)
+}
+
 #[utoipa::path(
     get,
     path = "/bot/v1/admin",
@@ -616,11 +700,19 @@ pub async fn redirect(
         admin_telegram_id = get_owner_telegram_id(&state.pool).await?;
     }
 
-    sqlx::query(
-        "UPDATE campaigns SET click_count = click_count + 1 WHERE id = $1"
+    // click_count = 1 после инкремента означает, что до этого переходов не было.
+    let is_first_click = sqlx::query_scalar::<_, bool>(
+        r#"
+        UPDATE campaigns
+        SET
+            click_count = click_count + 1,
+            first_clicked_at = COALESCE(first_clicked_at, NOW())
+        WHERE id = $1
+        RETURNING click_count = 1 AS is_first_click
+        "#,
     )
     .bind(campaign.id)
-    .execute(&state.pool)
+    .fetch_one(&state.pool)
     .await?;
 
     sqlx::query(
@@ -652,6 +744,23 @@ pub async fn redirect(
             chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
         );
         notify_admin(&state, tid, text);
+    }
+
+    if is_first_click {
+        // Владелец сервиса получает копию с указанием клиента
+        // (если он не является получателем обычного уведомления).
+        notify_owner_first_click(
+            &state,
+            campaign.id,
+            &campaign.phone,
+            &campaign.country_code,
+            &campaign.message,
+            campaign.template_name.as_deref(),
+            campaign.sent_by_telegram_id,
+            campaign.api_key_id,
+            admin_telegram_id,
+        )
+        .await;
     }
 
     Ok(axum::response::Redirect::temporary(&campaign.target_url))

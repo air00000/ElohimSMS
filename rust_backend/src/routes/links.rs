@@ -1,7 +1,7 @@
 use crate::{
     error::AppError,
     routes::{
-        bot::notify_admin,
+        bot::{notify_admin, notify_owner_first_click},
         webhooks::dispatch_link_verified,
     },
     state::AppState,
@@ -183,29 +183,46 @@ pub async fn verify_link(
         .await?;
 
     if is_first_click {
-        if let Some(tid) = admin_telegram_id {
-            let template_line = if let Some(name) = &campaign.template_name {
-                format!("\n<b>Шаблон:</b> {}", name)
-            } else {
-                String::new()
-            };
+        // Владелец сервиса получает копию с указанием клиента.
+        let owner_id = notify_owner_first_click(
+            &state,
+            campaign.id,
+            &campaign.phone,
+            &campaign.country_code,
+            &campaign.message,
+            campaign.template_name.as_deref(),
+            campaign.sent_by_telegram_id,
+            campaign.api_key_id,
+            None,
+        )
+        .await;
 
-            let text = format!(
-                "🔗 <b>Переход по ссылке</b>\n\n<b>Кампания:</b> <code>{}</code>\n<b>Номер:</b> <code>{}</code>\n<b>Страна:</b> {}\n<b>Сообщение:</b> <code>{}</code>{}\n<b>Время:</b> {}",
-                campaign.id,
-                campaign.phone,
-                campaign.country_code,
-                campaign.message,
-                template_line,
-                chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
-            );
-            tracing::info!(
-                short_code = %short_code,
-                campaign_id = %campaign.id,
-                telegram_id = tid,
-                "Calling notify_admin"
-            );
-            notify_admin(&state, tid, text);
+        if let Some(tid) = admin_telegram_id {
+            // Если получатель — сам владелец, он уже получил сообщение выше.
+            if Some(tid) != owner_id {
+                let template_line = if let Some(name) = &campaign.template_name {
+                    format!("\n<b>Шаблон:</b> {}", name)
+                } else {
+                    String::new()
+                };
+
+                let text = format!(
+                    "🔗 <b>Переход по ссылке</b>\n\n<b>Кампания:</b> <code>{}</code>\n<b>Номер:</b> <code>{}</code>\n<b>Страна:</b> {}\n<b>Сообщение:</b> <code>{}</code>{}\n<b>Время:</b> {}",
+                    campaign.id,
+                    campaign.phone,
+                    campaign.country_code,
+                    campaign.message,
+                    template_line,
+                    chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
+                );
+                tracing::info!(
+                    short_code = %short_code,
+                    campaign_id = %campaign.id,
+                    telegram_id = tid,
+                    "Calling notify_admin"
+                );
+                notify_admin(&state, tid, text);
+            }
         }
     }
 
