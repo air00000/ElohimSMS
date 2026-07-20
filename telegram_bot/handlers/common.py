@@ -22,7 +22,6 @@ BTN_ADMINS = "👥 Администраторы"
 BTN_KEYS = "🔑 API-ключи"
 BTN_TEMPLATES = "📝 Шаблоны"
 BTN_SEND_SMS = "📤 Отправить SMS"
-BTN_SEND_CAMPAIGN = "📨 Отправить кампанию"
 BTN_SETTINGS = "⚙️ Настройки"
 BTN_HELP = "❓ Помощь"
 BTN_MENU = "🏠 Меню"
@@ -33,7 +32,7 @@ def main_menu_keyboard(is_owner: bool = False) -> ReplyKeyboardMarkup:
     buttons = [
         [KeyboardButton(text=BTN_STATS)],
         [KeyboardButton(text=BTN_KEYS), KeyboardButton(text=BTN_TEMPLATES)],
-        [KeyboardButton(text=BTN_SEND_SMS), KeyboardButton(text=BTN_SEND_CAMPAIGN)],
+        [KeyboardButton(text=BTN_SEND_SMS)],
         [KeyboardButton(text=BTN_SETTINGS), KeyboardButton(text=BTN_HELP)],
     ]
     if is_owner:
@@ -117,7 +116,6 @@ async def cmd_help(message: types.Message):
         "• <b>Шаблоны</b> — храните именованные шаблоны на страну и выбирайте избранный.\n"
         "• <b>Отправить SMS</b> — ручная отправка сообщения или по шаблону.\n"
         "  Используйте <code>{link}</code> в тексте — он заменится на короткую ссылку.\n"
-        "• <b>Отправить кампанию</b> — отправка по избранному шаблону с короткой ссылкой.\n"
         "• <b>Настройки</b> — имя отправителя (sender ID).\n\n"
         "Placeholders: <code>{link}</code>, <code>{phone}</code>, <code>{country}</code>\n\n"
         "Кнопки <b>◀️ Назад</b> и <b>🏠 Меню</b> работают в любом диалоге.",

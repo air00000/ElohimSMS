@@ -32,18 +32,26 @@ struct LinkVerifiedWebhookEvent {
 #[utoipa::path(
     put,
     path = "/api/v1/webhook",
+    tag = "webhook",
+    summary = "Настроить webhook",
+    description = "Привязывает webhook к вашему API-ключу. URL обязан быть публичным HTTPS-адресом.\n\n\
+        При переходе получателя по ссылке из SMS на указанный URL отправляется POST-запрос \
+        с событием `campaign.link_verified`. Тело запроса подписывается HMAC-SHA256 \
+        вашим секретом, подпись передаётся в заголовке `X-Elohim-Signature` \
+        в формате `sha256=<hex>`. Тип события — в заголовке `X-Elohim-Event`.\n\n\
+        Поля события: `event_id`, `event_type`, `occurred_at`, `campaign_id`, \
+        `external_id`, `short_code`, `click_count`.",
     request_body = ConfigureWebhookRequest,
     responses(
         (
             status = 200,
-            description = "Webhook configured",
+            description = "Webhook успешно настроен",
             body = ConfigureWebhookResponse
         ),
-        (status = 400, description = "Invalid webhook configuration"),
-        (status = 401, description = "Unauthorized")
+        (status = 400, description = "Некорректный URL или секрет короче 16 символов"),
+        (status = 401, description = "Отсутствует или невалиден API-ключ")
     ),
-    security(("api_key" = [])),
-    tag = "webhook"
+    security(("api_key" = []))
 )]
 pub async fn configure_webhook(
     State(state): State<AppState>,

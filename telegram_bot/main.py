@@ -13,7 +13,7 @@ from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_applicati
 from aiohttp import web
 
 from config import settings
-from handlers import admin, campaigns, common, internal, keys, settings as settings_handler, sms, stats, templates
+from handlers import admin, common, internal, keys, settings as settings_handler, sms, stats, templates
 from middlewares.auth import AdminMiddleware
 from services.api import api
 
@@ -34,7 +34,6 @@ def setup_routers(dp: Dispatcher) -> None:
         sms.router,
         stats.router,
         templates.router,
-        campaigns.router,
         settings_handler.router,
     ]
 

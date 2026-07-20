@@ -3,8 +3,7 @@ use crate::{
     models::{
         Admin, ApiKey, ApiKeyListItem, BotSendSmsRequest, Campaign, CreateAdminRequest,
         CreateKeyRequest, CreateKeyResponse, CreateTemplateRequest, EnsureOwnerRequest,
-        SendCampaignRequest, SendCampaignResponse, SendSmsResponse, StatsResponse, Template,
-        UpdateSenderNameRequest,
+        SendSmsResponse, StatsResponse, Template, UpdateSenderNameRequest,
     },
     phone::{detect_country_code, normalize_phone},
     routes::auth::hash_api_key,
@@ -48,20 +47,6 @@ async fn generate_short_code(pool: &sqlx::PgPool) -> Result<String, AppError> {
             return Ok(code);
         }
     }
-}
-
-async fn get_favorite_template(
-    pool: &sqlx::PgPool,
-    country_code: &str,
-) -> Result<Option<Template>, AppError> {
-    let template = sqlx::query_as::<_, Template>(
-        "SELECT * FROM templates WHERE country_code = $1 AND is_active = TRUE AND is_favorite = TRUE LIMIT 1",
-    )
-    .bind(country_code)
-    .fetch_optional(pool)
-    .await?;
-
-    Ok(template)
 }
 
 /// Отправляет уведомление админу через внутренний endpoint бота.
@@ -564,88 +549,6 @@ async fn send_bot_link_campaign(
         provider_response: Some(provider_response),
         campaign_id: Some(campaign.id),
         short_link: Some(short_link),
-    }))
-}
-
-// ---------- Кампании ----------
-
-#[utoipa::path(
-    post,
-    path = "/bot/v1/campaigns/send",
-    request_body = SendCampaignRequest,
-    responses((status = 200, description = "Campaign sent", body = SendCampaignResponse))
-)]
-#[instrument(skip(state, payload), fields(phone = %payload.phone))]
-pub async fn send_campaign(
-    State(state): State<AppState>,
-    Json(payload): Json<SendCampaignRequest>,
-) -> Result<Json<SendCampaignResponse>, AppError> {
-    let phone = normalize_phone(&payload.phone)?;
-    let target_url = payload.url.trim();
-    if target_url.is_empty() {
-        return Err(AppError::BadRequest("Target URL is required".to_string()));
-    }
-
-    let country_code = detect_country_code(&phone)?;
-    let template = get_favorite_template(&state.pool, &country_code)
-        .await?
-        .ok_or_else(|| {
-            AppError::BadRequest(format!(
-                "No favorite template found for country {}",
-                country_code
-            ))
-        })?;
-
-    let short_code = generate_short_code(&state.pool).await?;
-    let short_link = state.config.short_link(&short_code);
-
-    let message = render_template(&template.text, &short_link, &phone, &country_code);
-    let sender_id = payload
-        .sender_id
-        .as_deref()
-        .filter(|s| !s.is_empty())
-        .unwrap_or("TRACKING");
-
-    info!(phone = %phone, short_code = %short_code, "Sending campaign");
-
-    let result = state
-        .sms_client
-        .send_sms(&phone, &message, Some(sender_id))
-        .await
-        .map_err(|e| AppError::Internal(format!("SMS gateway error: {e}")))?;
-
-    let status = if result.success { "sent" } else { "failed" };
-    let sent_at = if result.success { Some(chrono::Utc::now()) } else { None };
-    let provider_response = result.provider_response_json();
-
-    let template_name = template.name.clone();
-
-    let campaign = sqlx::query_as::<_, Campaign>(
-        "INSERT INTO campaigns
-         (short_code, target_url, phone, country_code, message, template_name, status, sent_by_telegram_id, provider_response, provider_name, sent_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-         RETURNING *"
-    )
-    .bind(&short_code)
-    .bind(target_url)
-    .bind(&phone)
-    .bind(&country_code)
-    .bind(&message)
-    .bind(template_name.as_deref())
-    .bind(status)
-    .bind(payload.telegram_id)
-    .bind(&provider_response)
-    .bind(&result.provider_name)
-    .bind(sent_at)
-    .fetch_one(&state.pool)
-    .await?;
-
-    Ok(Json(SendCampaignResponse {
-        success: result.success,
-        campaign_id: campaign.id,
-        short_link,
-        message,
-        provider_response: Some(provider_response),
     }))
 }
 

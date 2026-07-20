@@ -17,30 +17,61 @@ pub struct SmsLog {
 
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct SendSmsRequest {
+    /// Номер получателя в международном формате (E.164).
+    #[schema(example = "+79991234567")]
     pub phone: String,
+
+    /// Целевая ссылка. Если для страны получателя есть активный шаблон,
+    /// ссылка будет обёрнута в короткую и подставлена в текст шаблона.
+    /// Иначе значение отправляется как текст SMS.
+    #[schema(example = "https://example.com/landing")]
     pub message: String,
+
+    /// Альфавитное имя отправителя (sender ID). По умолчанию — `TRACKING`.
+    #[schema(example = "MYBRAND")]
     pub sender_id: Option<String>,
 
     /// Идентификатор сущности во внешней системе.
     ///
     /// Например: Telegram chat_id, order_id или UUID операции.
     /// Возвращается без изменений в webhook-событии.
+    #[schema(example = "order-12345")]
     pub external_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct SendSmsResponse {
+    /// true, если SMS-шлюз принял сообщение.
+    #[schema(example = true)]
     pub success: bool,
+
+    /// Человекочитаемый статус отправки.
+    #[schema(example = "Campaign sent via API")]
     pub message: String,
+
+    /// Сырой ответ SMS-провайдера (для отладки).
     pub provider_response: Option<serde_json::Value>,
+
+    /// Идентификатор кампании, если ссылка была обёрнута в короткую.
     pub campaign_id: Option<Uuid>,
+
+    /// Короткая ссылка, отправленная получателю (если применялся шаблон).
+    #[schema(example = "https://linkre.info/r/aB3dE5fG")]
     pub short_link: Option<String>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct HealthResponse {
+    /// Общий статус сервиса.
+    #[schema(example = "ok")]
     pub status: String,
+
+    /// Доступность базы данных: `ok` или `error`.
+    #[schema(example = "ok")]
     pub database: String,
+
+    /// Время ответа в формате RFC 3339.
+    #[schema(example = "2026-07-20T12:00:00Z")]
     pub timestamp: String,
 }
 
@@ -135,23 +166,6 @@ pub struct Campaign {
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
-pub struct SendCampaignRequest {
-    pub phone: String,
-    pub url: String,
-    pub telegram_id: i64,
-    pub sender_id: Option<String>,
-}
-
-#[derive(Debug, Serialize, ToSchema)]
-pub struct SendCampaignResponse {
-    pub success: bool,
-    pub campaign_id: Uuid,
-    pub short_link: String,
-    pub message: String,
-    pub provider_response: Option<serde_json::Value>,
-}
-
-#[derive(Debug, Deserialize, ToSchema)]
 pub struct BotSendSmsRequest {
     pub phone: String,
     pub message: String,
@@ -183,19 +197,30 @@ pub struct StatsResponse {
 
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct ConfigureWebhookRequest {
-    /// Публичный HTTPS endpoint внешнего бота.
+    /// Публичный HTTPS endpoint, который будет принимать события.
+    #[schema(example = "https://example.com/webhooks/elohim")]
     pub url: String,
 
-    /// Секрет для HMAC-SHA256. Минимум 16 символов.
+    /// Секрет для проверки подписи HMAC-SHA256. Минимум 16 символов.
+    #[schema(example = "my-super-secret-key-32chars")]
     pub secret: String,
 
-    /// По умолчанию webhook включается.
+    /// Включить или выключить webhook. По умолчанию — `true`.
+    #[schema(example = true)]
     pub is_active: Option<bool>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ConfigureWebhookResponse {
+    /// true, если настройки сохранены.
+    #[schema(example = true)]
     pub success: bool,
+
+    /// Сохранённый URL webhook.
+    #[schema(example = "https://example.com/webhooks/elohim")]
     pub url: String,
+
+    /// Активен ли webhook после изменения.
+    #[schema(example = true)]
     pub is_active: bool,
 }

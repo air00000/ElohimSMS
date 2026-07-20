@@ -24,12 +24,20 @@ struct SendOutcome {
 #[utoipa::path(
     post,
     path = "/api/v1/sms/send",
+    tag = "sms",
+    summary = "Отправить SMS со ссылкой",
+    description = "Отправляет SMS на указанный номер.\n\n\
+        Если для страны получателя настроен активный шаблон, ссылка из поля `message` \
+        оборачивается в короткую ссылку и подставляется в текст шаблона — в ответе \
+        вернутся `campaign_id` и `short_link`. Иначе SMS отправляется как есть.\n\n\
+        При переходе получателя по ссылке на ваш webhook отправляется событие \
+        `campaign.link_verified` (см. `PUT /api/v1/webhook`).",
     request_body = SendSmsRequest,
     responses(
-        (status = 200, description = "SMS sent or queued", body = SendSmsResponse),
-        (status = 400, description = "Bad request"),
-        (status = 401, description = "Unauthorized"),
-        (status = 429, description = "Too many requests")
+        (status = 200, description = "SMS принята в обработку", body = SendSmsResponse),
+        (status = 400, description = "Некорректный запрос (невалидный номер или пустое сообщение)"),
+        (status = 401, description = "Отсутствует или невалиден API-ключ"),
+        (status = 429, description = "Превышен лимит запросов")
     ),
     security(
         ("api_key" = [])

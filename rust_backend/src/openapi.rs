@@ -1,9 +1,6 @@
 use crate::models::{
-    Admin, ApiKeyListItem, BotSendSmsRequest, Campaign, ConfigureWebhookRequest,
-    ConfigureWebhookResponse, CreateAdminRequest, CreateKeyRequest, CreateKeyResponse,
-    CreateTemplateRequest, EnsureOwnerRequest, HealthResponse, SendCampaignRequest,
-    SendCampaignResponse, SendSmsRequest, SendSmsResponse, SmsLog, Template,
-    UpdateSenderNameRequest,
+    ConfigureWebhookRequest, ConfigureWebhookResponse, HealthResponse, SendSmsRequest,
+    SendSmsResponse,
 };
 use utoipa::openapi::security::{ApiKey as SecurityApiKey, ApiKeyValue, SecurityScheme};
 use utoipa::{Modify, OpenApi};
@@ -17,66 +14,39 @@ impl Modify for SecurityAddon {
                 "api_key",
                 SecurityScheme::ApiKey(SecurityApiKey::Header(ApiKeyValue::new("X-API-Key"))),
             );
-            components.add_security_scheme(
-                "internal_bot_token",
-                SecurityScheme::ApiKey(SecurityApiKey::Header(ApiKeyValue::new(
-                    "X-Internal-Bot-Token",
-                ))),
-            );
         }
     }
 }
 
 #[derive(OpenApi)]
 #[openapi(
+    info(
+        title = "ElohimSMS API",
+        description = "Публичный API для отправки SMS с отслеживаемыми ссылками.\n\n\
+            Аутентификация: передайте ваш ключ в заголовке `X-API-Key`.\n\n\
+            Когда получатель переходит по ссылке из SMS, на ваш webhook \
+            отправляется событие `campaign.link_verified`, подписанное HMAC-SHA256 \
+            (заголовок `X-Elohim-Signature`)."
+    ),
     paths(
         crate::routes::health::health,
         crate::routes::sms::send_sms,
         crate::routes::webhooks::configure_webhook,
-        crate::routes::bot::list_admins,
-        crate::routes::bot::create_admin,
-        crate::routes::bot::ensure_owner,
-        crate::routes::bot::update_sender_name,
-        crate::routes::bot::remove_admin,
-        crate::routes::bot::list_keys,
-        crate::routes::bot::create_key,
-        crate::routes::bot::revoke_key,
-        crate::routes::bot::list_templates,
-        crate::routes::bot::create_template,
-        crate::routes::bot::delete_template,
-        crate::routes::bot::set_favorite_template,
-        crate::routes::bot::bot_send_sms,
-        crate::routes::bot::send_campaign,
     ),
     components(
         schemas(
-            SmsLog,
             SendSmsRequest,
             SendSmsResponse,
             HealthResponse,
-            Admin,
-            CreateAdminRequest,
-            ApiKeyListItem,
-            CreateKeyRequest,
-            CreateKeyResponse,
-            Template,
-            CreateTemplateRequest,
-            Campaign,
             ConfigureWebhookRequest,
             ConfigureWebhookResponse,
-            SendCampaignRequest,
-            SendCampaignResponse,
-            BotSendSmsRequest,
-            UpdateSenderNameRequest,
-            EnsureOwnerRequest,
         )
     ),
     modifiers(&SecurityAddon),
     tags(
-        (name = "health", description = "Health check"),
-        (name = "sms", description = "SMS sending"),
-        (name = "webhook", description = "External webhook configuration"),
-        (name = "bot", description = "Telegram bot internal API"),
+        (name = "sms", description = "Отправка SMS"),
+        (name = "webhook", description = "Настройка webhook для событий"),
+        (name = "health", description = "Состояние сервиса"),
     ),
     security(
         ("api_key" = [])

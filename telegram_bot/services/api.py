@@ -155,23 +155,7 @@ class BackendAPI:
             "POST", f"/bot/v1/templates/{template_id}/favorite"
         )
 
-    # ---------- SMS / Кампании ----------
-
-    async def send_campaign(
-        self, phone: str, url: str, telegram_id: int, sender_id: str | None = None
-    ) -> dict[str, Any]:
-        payload = {
-            "phone": phone,
-            "url": url,
-            "telegram_id": telegram_id,
-        }
-        if sender_id is not None:
-            payload["sender_id"] = sender_id
-        return await self.request(
-            "POST",
-            "/bot/v1/campaigns/send",
-            json=payload,
-        )
+    # ---------- SMS ----------
 
     async def send_sms(
         self,
