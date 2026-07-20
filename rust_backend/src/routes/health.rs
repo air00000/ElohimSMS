@@ -1,13 +1,14 @@
 use crate::{models::HealthResponse, state::AppState};
 use axum::{extract::State, Json};
 
+/// Проверка состояния сервиса
+///
+/// Возвращает состояние сервиса и доступность базы данных.
+/// Аутентификация не требуется.
 #[utoipa::path(
     get,
     path = "/health",
     tag = "health",
-    summary = "Проверка состояния сервиса",
-    description = "Возвращает состояние сервиса и доступность базы данных. \
-        Аутентификация не требуется.",
     responses(
         (status = 200, description = "Сервис работает", body = HealthResponse)
     ),
