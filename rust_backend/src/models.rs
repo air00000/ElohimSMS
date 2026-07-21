@@ -27,11 +27,6 @@ pub struct SendSmsRequest {
     #[schema(example = "https://example.com/landing")]
     pub message: String,
 
-    /// Deprecated: игнорируется. Имя отправителя выбирается автоматически —
-    /// избранное имя отправителя для страны получателя.
-    #[schema(example = "MYBRAND")]
-    pub sender_id: Option<String>,
-
     /// Идентификатор сущности во внешней системе.
     ///
     /// Например: Telegram chat_id, order_id или UUID операции.
