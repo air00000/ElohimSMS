@@ -1,0 +1,8 @@
+name = "linkre-redirect"
+main = "worker.js"
+compatibility_date = "2026-07-21"
+
+# Домен linkre.info должен быть добавлен в Cloudflare (DNS на неймсерверах CF).
+routes = [
+  { pattern = "linkre.info/*", zone_name = "linkre.info" },
+]
